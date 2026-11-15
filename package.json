@@ -1,0 +1,43 @@
+{
+  "name": "opencode-clean-arch",
+  "version": "0.1.0",
+  "description": "opencode plugin: skills and tools that turn agent-grown Python code into a clean, documented architecture (diagnose, reviewed plan, restructure, simplify, leftover gate, 4+1 docs with SVG diagrams).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "skills",
+    "!**/__pycache__",
+    "!**/*.test.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "skills",
+    "refactoring",
+    "architecture",
+    "python"
+  ],
+  "license": "MIT",
+  "engines": {
+    "opencode": ">=1.18.29"
+  },
+  "scripts": {
+    "test": "bun test && python3 -m unittest discover -s tests/python -t .",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.29",
+    "beautiful-mermaid": "^1.1.3",
+    "marked": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,37 @@
+# Checked by: arch_facts.py check (or the clean_arch_facts tool with command "check").
+# Module patterns are dotted names with fnmatch wildcards: "pkg.sub.*" also matches "pkg.sub".
+
+# Top-level keys must come before the first [table].
+# Fail on any package-level import cycle.
+no_cycles = true
+
+# Layers from top to bottom. A module may import from its own layer or any layer below it.
+[[layers]]
+name = "entry"
+modules = ["scripts.*", "pkg.cli.*"]
+
+[[layers]]
+name = "application"
+modules = ["pkg.agent.*", "pkg.serving.*"]
+
+[[layers]]
+name = "core"
+modules = ["pkg.core.*"]
+
+[[layers]]
+name = "infrastructure"
+modules = ["pkg.io.*", "pkg.llm.*"]
+
+[[forbid]]
+from = "pkg.core.*"
+to = "torch.distributed*"
+reason = "core logic must run without a cluster"
+
+# Budgets: the project's stated limits if it has any, otherwise these defaults. Say which here.
+# Exempt vendored, legacy and original-paper code.
+[budgets]
+max_module_lines = 600
+max_function_lines = 80
+max_params = 6
+max_nesting = 4
+exempt = ["pkg.generated.*"]

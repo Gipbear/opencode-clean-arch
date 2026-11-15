@@ -1,0 +1,11 @@
+flowchart LR
+  subgraph RO[只读阶段]
+    B[0 基线<br/>测试 + 事实] --> D[1 诊断<br/>arch-diagnose]
+    D --> P[2 方案<br/>arch-plan]
+  end
+  P --> R{浏览器评审}
+  R -- 要求修改 --> P
+  R -- 批准 --> E[3 执行<br/>restructure-modules<br/>simplify-code]
+  E --> G[4 收尾门禁<br/>clean-finish<br/>comment-hygiene]
+  G -- 未通过 --> E
+  G -- 通过 --> M[5 文档<br/>arch-map 4+1]

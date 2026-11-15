@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1043.892 302.95" width="1043.892" height="302.95" style="background:#FFFFFF">
+<style>
+  text { font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif; }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="#47474a" stroke="#47474a" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="#47474a" stroke="#47474a" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<g class="subgraph" data-id="RO" data-label="只读阶段">
+  <rect x="315.22" y="130.7" width="468.74" height="132.25" rx="0" ry="0" fill="#FFFFFF" stroke="#d4d4d4" stroke-width="1" />
+  <rect x="315.22" y="130.7" width="468.74" height="28" rx="0" ry="0" fill="#f4f4f4" stroke="#d4d4d4" stroke-width="1" />
+  <text x="327.22" y="144.7" font-size="12" font-weight="600" fill="#7d7d7f" dy="4.199999999999999">只读阶段</text>
+</g>
+<polyline class="edge" data-from="R" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="批准" points="145.03750000000002,85.6875 216.05000000000004,85.6875 216.05000000000004,75.35 320.34000000000003,75.35" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="E" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="483.07300000000004,63.56666666666667 613.4830000000001,63.56666666666667" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="G" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="未通过" points="613.4830000000001,87.13333333333334 483.07300000000004,87.13333333333334" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="G" data-to="M" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="通过" points="756.95,75.35 886.36,75.35" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="P" data-to="R" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="767.96,220.05 801.96,220.05000000000004 801.96,120.70000000000002 180.05,120.70000000000002" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="R" data-to="P" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="要求修改" points="145.03750000000002,155.7125 192.05,155.7125 192.05,238.5 632.953,238.5 632.953,229.01666666666665 668.953,229.01666666666665" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="B" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="433.42600000000004,201.6 492.30600000000004,201.6" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="D" data-to="P" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="620.953,201.6 632.953,201.6 632.953,211.08333333333331 668.953,211.08333333333331" fill="none" stroke="#939395" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="R" data-to="E" data-label="批准">
+  <rect x="224.05000000000007" y="59.350000000000016" width="41.41" height="30.3" rx="2" ry="2" fill="#FFFFFF" stroke="#e5e5e5" stroke-width="1" />
+  <text x="244.75500000000005" y="74.50000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="#7d7d7f" dy="3.8499999999999996">批准</text>
+</g>
+<g class="edge-label" data-from="G" data-to="E" data-label="未通过">
+  <rect x="516.193" y="71.13333333333334" width="53.29" height="30.3" rx="2" ry="2" fill="#FFFFFF" stroke="#e5e5e5" stroke-width="1" />
+  <text x="542.838" y="86.28333333333335" text-anchor="middle" font-size="11" font-weight="400" fill="#7d7d7f" dy="3.8499999999999996">未通过</text>
+</g>
+<g class="edge-label" data-from="G" data-to="M" data-label="通过">
+  <rect x="800.95" y="59.350000000000016" width="41.41" height="30.3" rx="2" ry="2" fill="#FFFFFF" stroke="#e5e5e5" stroke-width="1" />
+  <text x="821.6550000000001" y="74.50000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="#7d7d7f" dy="3.8499999999999996">通过</text>
+</g>
+<g class="edge-label" data-from="R" data-to="P" data-label="要求修改">
+  <rect x="200.05" y="222.5" width="65.17" height="30.3" rx="2" ry="2" fill="#FFFFFF" stroke="#e5e5e5" stroke-width="1" />
+  <text x="232.63500000000002" y="237.65" text-anchor="middle" font-size="11" font-weight="400" fill="#7d7d7f" dy="3.8499999999999996">要求修改</text>
+</g>
+<g class="node" data-id="R" data-label="浏览器评审" data-shape="diamond">
+  <polygon points="110.025,50.675 180.05,120.7 110.025,190.72500000000002 40,120.7" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="110.025" y="120.7" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A" dy="4.55">浏览器评审</text>
+</g>
+<g class="node" data-id="E" data-label="3 执行
+restructure-modules
+simplify-code" data-shape="rectangle">
+  <rect x="320.34000000000003" y="40" width="162.733" height="70.7" rx="0" ry="0" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="401.7065" y="75.35" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A"><tspan x="401.7065" dy="-12.350000000000001">3 执行</tspan><tspan x="401.7065" dy="16.900000000000002">restructure-modules</tspan><tspan x="401.7065" dy="16.900000000000002">simplify-code</tspan></text>
+</g>
+<g class="node" data-id="G" data-label="4 收尾门禁
+clean-finish
+comment-hygiene" data-shape="rectangle">
+  <rect x="613.4830000000001" y="40" width="143.467" height="70.7" rx="0" ry="0" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="685.2165000000001" y="75.35" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A"><tspan x="685.2165000000001" dy="-12.350000000000001">4 收尾门禁</tspan><tspan x="685.2165000000001" dy="16.900000000000002">clean-finish</tspan><tspan x="685.2165000000001" dy="16.900000000000002">comment-hygiene</tspan></text>
+</g>
+<g class="node" data-id="M" data-label="5 文档
+arch-map 4+1" data-shape="rectangle">
+  <rect x="886.36" y="48.45" width="117.53200000000001" height="53.800000000000004" rx="0" ry="0" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="945.126" y="75.35000000000001" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A"><tspan x="945.126" dy="-3.9000000000000012">5 文档</tspan><tspan x="945.126" dy="16.900000000000002">arch-map 4+1</tspan></text>
+</g>
+<g class="node" data-id="B" data-label="0 基线
+测试 + 事实" data-shape="rectangle">
+  <rect x="320.34000000000003" y="174.7" width="113.086" height="53.800000000000004" rx="0" ry="0" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="376.88300000000004" y="201.6" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A"><tspan x="376.88300000000004" dy="-3.9000000000000012">0 基线</tspan><tspan x="376.88300000000004" dy="16.900000000000002">测试 + 事实</tspan></text>
+</g>
+<g class="node" data-id="D" data-label="1 诊断
+arch-diagnose" data-shape="rectangle">
+  <rect x="492.30600000000004" y="174.7" width="128.647" height="53.800000000000004" rx="0" ry="0" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="556.6295" y="201.6" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A"><tspan x="556.6295" dy="-3.9000000000000012">1 诊断</tspan><tspan x="556.6295" dy="16.900000000000002">arch-diagnose</tspan></text>
+</g>
+<g class="node" data-id="P" data-label="2 方案
+arch-plan" data-shape="rectangle">
+  <rect x="668.953" y="193.15" width="99.007" height="53.800000000000004" rx="0" ry="0" fill="#f9f9f9" stroke="#d4d4d4" stroke-width="0.75" />
+  <text x="718.4565" y="220.05" text-anchor="middle" font-size="13" font-weight="500" fill="#27272A"><tspan x="718.4565" dy="-3.9000000000000012">2 方案</tspan><tspan x="718.4565" dy="16.900000000000002">arch-plan</tspan></text>
+</g>
+</svg>
