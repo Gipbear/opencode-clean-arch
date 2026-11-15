@@ -23,6 +23,14 @@
     "python"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gipbear/opencode-clean-arch.git"
+  },
+  "homepage": "https://github.com/Gipbear/opencode-clean-arch#readme",
+  "bugs": {
+    "url": "https://github.com/Gipbear/opencode-clean-arch/issues"
+  },
   "engines": {
     "opencode": ">=1.18.29"
   },

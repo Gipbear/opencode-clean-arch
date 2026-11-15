@@ -47,28 +47,28 @@
 
 ```bash
 # 安装到当前项目（写入 .opencode/opencode.json），加 -g 安装到全局
-opencode plugin "git+https://<你的代码托管地址>/opencode-clean-arch.git"
+opencode plugin "git+https://github.com/Gipbear/opencode-clean-arch.git"
 ```
 
 或手动写配置：
 
 ```json
-{ "plugin": ["git+https://<你的代码托管地址>/opencode-clean-arch.git"] }
+{ "plugin": ["git+https://github.com/Gipbear/opencode-clean-arch.git"] }
 ```
 
 ### opencode 2.x
 
 ```bash
-opencode plugin add "git+https://<你的代码托管地址>/opencode-clean-arch.git"
+opencode plugin add "git+https://github.com/Gipbear/opencode-clean-arch.git"
 ```
 
 或手动写配置（注意 2.x 的键名是 `plugins`）：
 
 ```json
-{ "plugins": ["git+https://<你的代码托管地址>/opencode-clean-arch.git"] }
+{ "plugins": ["git+https://github.com/Gipbear/opencode-clean-arch.git"] }
 ```
 
-两种写法都支持 `github:owner/repo`、`git+ssh://…`、本地路径（`/path/to/opencode-clean-arch`）；发布到 npm（或内部 npm 源）后直接写包名 `opencode-clean-arch`。
+固定到某个发布版本时，在地址后加标签，例如 `…/opencode-clean-arch.git#v0.1.0`，版本列表见 [Releases](https://github.com/Gipbear/opencode-clean-arch/releases)。两种写法也都支持 `github:Gipbear/opencode-clean-arch`、`git+ssh://…` 和本地路径（`/path/to/opencode-clean-arch`）。
 
 ### 只用 skill，不装插件
 
