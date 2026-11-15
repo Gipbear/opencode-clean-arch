@@ -41,7 +41,9 @@
 
 ## 安装
 
-前置条件：opencode ≥ 1.18.29 或 2.x；Python ≥ 3.10（分层规则检查需要 3.11+ 的 `tomllib`）。分析脚本只用标准库。
+前置条件：opencode ≥ 1.16 或 2.x；Python ≥ 3.10（分层规则检查需要 3.11+ 的 `tomllib`）。分析脚本只用标准库。
+
+插件只用到 1.x 插件包里的 `tool` 辅助函数，该接口在 1.16 与 1.19 之间没有变化。skill 通过配置项 `skills.paths` 注册；如果你的 opencode 较老、装好后看不到 skill，把 `skills/` 下的目录复制到项目的 `.opencode/skills/` 即可（见下文“只用 skill，不装插件”）。
 
 ### opencode 1.x
 

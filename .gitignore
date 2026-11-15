@@ -4,3 +4,4 @@ __pycache__/
 .clean-arch/cache/
 *.tgz
 docs/HANDOFF.md
+package-lock.json
