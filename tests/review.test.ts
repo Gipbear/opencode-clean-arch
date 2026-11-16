@@ -5,6 +5,7 @@ import path from "node:path"
 import { diffLines } from "../src/review/diff.ts"
 import { renderMarkdown } from "../src/review/markdown.ts"
 import { formatOutcome, runReview } from "../src/review/server.ts"
+import { TOOLS } from "../src/tools.ts"
 
 const PLAN = `# Plan: remove billing copy
 
@@ -187,6 +188,30 @@ describe("review server", () => {
     await run.url
     controller.abort()
     expect((await run.outcome).decision).toBe("cancelled")
+  })
+
+  test("the tool returns the URL at once on open and the decision on wait", async () => {
+    process.env.CLEAN_ARCH_REVIEW_NO_OPEN = "1"
+    const root = project()
+    const tool = TOOLS.find((t) => t.name === "clean_arch_review")!
+    const env = { directory: root, progress: () => {} }
+
+    const opened = await tool.execute({ path: ".clean-arch/plan.md" }, env)
+    const url = new URL(opened.match(/https?:\/\/\S+/)![0])
+    expect(opened).toContain('action "wait"')
+
+    const waiting = tool.execute({ path: ".clean-arch/plan.md", action: "wait" }, env)
+    await fetch(`${url.origin}/api/decision`, {
+      method: "POST",
+      headers: { "x-review-token": url.searchParams.get("t")! },
+      body: JSON.stringify({ decision: "approved", comment: "ok", annotations: [] }),
+    })
+    expect(await waiting).toContain("Decision: approved")
+
+    // The finished session is gone: a new open serves a fresh page.
+    const reopened = await tool.execute({ path: ".clean-arch/plan.md" }, env)
+    expect(reopened.match(/https?:\/\/\S+/)![0]).not.toBe(url.href)
+    await tool.execute({ path: ".clean-arch/plan.md", action: "wait" }, { ...env, signal: AbortSignal.abort() })
   })
 
   test("refuses files outside the project", async () => {

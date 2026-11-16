@@ -50,7 +50,7 @@ write for checks go to `.clean-arch/cache/`.
 |---|---|
 | `clean_arch_facts` | Deterministic facts: modules, imports, cycles, duplicates, hotspots, classes, draft Mermaid, rule checks, and `importers` (everything that references a module) |
 | `clean_arch_leftovers` | Leftover scan: parallel versions, duplicates, broken imports, compat shims, commented code, debug output, narrative comments |
-| `clean_arch_review` | Opens the browser review page for a Markdown file and waits for approve / request changes |
+| `clean_arch_review` | `action: "open"` starts the browser review page and returns its URL (show it to the user); `action: "wait"` blocks until the user approves or requests changes |
 | `clean_arch_render` | Renders `*.mmd` diagrams to SVG for code hosts that do not render Mermaid |
 
 If the tools are not registered, run the scripts directly from this skill's directory:

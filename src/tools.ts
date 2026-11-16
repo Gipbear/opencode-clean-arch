@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { runScript } from "./python.ts"
 import { renderDiagrams } from "./render.ts"
-import { formatOutcome, runReview } from "./review/server.ts"
+import { formatOutcome, startReview, type ReviewSession } from "./review/server.ts"
 
 export interface ParamSpec {
   type: "string" | "number" | "boolean" | "string[]"
@@ -136,26 +136,62 @@ const render: ToolSpec = {
   },
 }
 
+const reviewSessions = new Map<string, ReviewSession>()
+
 const review: ToolSpec = {
   name: "clean_arch_review",
   description:
-    "Open a browser review page for a Markdown document (plan, diagnosis, design doc) and wait until the user approves, " +
-    "approves with notes, or requests changes. The user can select text to comment on, delete or replace it, and sees " +
-    "a diff against the previous revision. Returns the decision and structured annotations. Blocks until decided.",
+    "Browser review page for a Markdown document (plan, diagnosis, design doc). The user can select text to comment on, " +
+    "delete or replace it, sees a diff against the previous revision, and approves, approves with notes or requests changes. " +
+    "Two steps: action=open starts the page and returns its URL immediately (tell the user the URL in your reply, because " +
+    "a browser may not open on remote machines); action=wait then blocks until the user decides and returns the decision " +
+    "with structured annotations.",
   params: {
     path: { type: "string", description: "Markdown file to review, relative to the project, e.g. .clean-arch/plan.md" },
+    action: { type: "string", optional: true, enum: ["open", "wait"], description: "open (default): start the page and return the URL; wait: block until the user decides" },
     title: { type: "string", optional: true, description: "title shown on the page (default: first heading)" },
   },
   async execute(args, env) {
-    const outcome = await runReview({
-      root: env.directory,
-      file: args.path,
-      title: args.title,
-      signal: env.signal,
-      onReady: (url) => env.progress(`Waiting for review: ${url}`),
-    })
-    return `Review page: ${outcome.url}\n${formatOutcome(outcome)}`
+    const key = path.resolve(env.directory, args.path)
+    let session = reviewSessions.get(key)
+    if (args.action === "wait") {
+      if (!session) {
+        session = await startReviewSession(key, env, args)
+        env.progress(`Waiting for review: ${session.url}`)
+      }
+      const onAbort = () => session!.cancel()
+      env.signal?.addEventListener("abort", onAbort, { once: true })
+      if (env.signal?.aborted) onAbort()
+      try {
+        const outcome = await session.outcome
+        return `Review page: ${outcome.url}\n${formatOutcome(outcome)}`
+      } finally {
+        env.signal?.removeEventListener("abort", onAbort)
+      }
+    }
+    if (session) {
+      // A page that was opened but never waited on shows a stale copy of the file.
+      session.cancel()
+      await session.outcome
+    }
+    session = await startReviewSession(key, env, args)
+    return [
+      `Review page is ready: ${session.url}`,
+      "",
+      "Next: tell the user this URL in your reply (the browser may not have opened, for example on a remote or headless machine),",
+      `then call clean_arch_review again with path "${args.path}" and action "wait". Do nothing else until that call returns.`,
+    ].join("\n")
   },
+}
+
+async function startReviewSession(key: string, env: ToolEnv, args: Record<string, any>): Promise<ReviewSession> {
+  const session = await startReview({ root: env.directory, file: args.path, title: args.title })
+  reviewSessions.set(key, session)
+  void session.outcome.then(
+    () => reviewSessions.delete(key),
+    () => reviewSessions.delete(key),
+  )
+  return session
 }
 
 export const TOOLS: ToolSpec[] = [facts, leftovers, render, review]

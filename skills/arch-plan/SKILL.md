@@ -94,9 +94,10 @@ Rules for good steps:
 
 ## Review loop
 
-1. Call `clean_arch_review` with `path: ".clean-arch/plan.md"` and a short `title`. The tool
-   opens the review page and returns when the user decides. Tell the user in one line that
-   the review page is open, and give its URL from the tool's progress output if one was shown.
+1. Call `clean_arch_review` with `path: ".clean-arch/plan.md"` and a short `title`. It starts
+   the review page and returns its URL at once. Write the URL in your reply (the browser may
+   not open on a remote or headless machine), then call `clean_arch_review` again with the same
+   `path` and `action: "wait"`. That call returns when the user decides.
 2. Read the result:
    - `approved`: copy the plan to `.clean-arch/plans/<YYYY-MM-DD>-<slug>.md` and continue.
    - `approved_with_notes`: apply the notes that do not change scope, mention them in the

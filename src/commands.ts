@@ -38,8 +38,9 @@ export const COMMANDS: CommandSpec[] = [
     name: "arch-review",
     description: "在浏览器中评审一个 Markdown 文档（方案、设计）",
     template:
-      "Call clean_arch_review for the file $ARGUMENTS (default .clean-arch/plan.md). " +
-      "When it returns, apply the feedback to the file if changes were requested and submit it for review again until approved.",
+      "Call clean_arch_review for the file $ARGUMENTS (default .clean-arch/plan.md): first open it and tell me the URL, " +
+      "then call it again with action wait. When it returns, apply the feedback to the file if changes were requested " +
+      "and submit it for review again until approved.",
   },
 ]
 

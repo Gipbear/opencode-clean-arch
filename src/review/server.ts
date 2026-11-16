@@ -52,6 +52,27 @@ export function reviewSettingsFromEnv(env: NodeJS.ProcessEnv = process.env) {
  * `rN.json` (the feedback), so the next round can show a diff and the previous feedback.
  */
 export async function runReview(options: ReviewOptions): Promise<ReviewOutcome> {
+  const session = await startReview(options)
+  const onAbort = () => session.cancel()
+  options.signal?.addEventListener("abort", onAbort, { once: true })
+  if (options.signal?.aborted) onAbort()
+  try {
+    return await session.outcome
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort)
+  }
+}
+
+export interface ReviewSession {
+  url: string
+  revision: number
+  /** Resolves once the reviewer decides, the timeout passes or `cancel()` is called. */
+  outcome: Promise<ReviewOutcome>
+  cancel(): void
+}
+
+/** Start serving the page and return as soon as it is reachable; `outcome` settles later. */
+export async function startReview(options: Omit<ReviewOptions, "signal">): Promise<ReviewSession> {
   const root = path.resolve(options.root)
   const file = path.resolve(root, options.file)
   const relFile = path.relative(root, file)
@@ -119,19 +140,16 @@ export async function runReview(options: ReviewOptions): Promise<ReviewOutcome> 
 
   const timeoutMs = options.timeoutMs ?? settings.timeoutMs
   const timer = setTimeout(() => settle({ decision: "timeout", comment: "", annotations: [] }), timeoutMs)
-  const onAbort = () => settle({ decision: "cancelled", comment: "", annotations: [] })
-  options.signal?.addEventListener("abort", onAbort, { once: true })
-  if (options.signal?.aborted) onAbort()
 
-  const result = await decided
-  clearTimeout(timer)
-  options.signal?.removeEventListener("abort", onAbort)
-  server.closeAllConnections?.()
-  server.close()
-
-  const recordPath = path.join(historyDir, `r${revision}.json`)
-  await writeFile(recordPath, JSON.stringify({ ...result, revision, file: page.file, at: new Date().toISOString() }, null, 2) + "\n")
-  return { ...result, revision, record: path.relative(root, recordPath).split(path.sep).join("/"), url, diagramWarnings: diagramNotes }
+  const outcome = decided.then(async (result): Promise<ReviewOutcome> => {
+    clearTimeout(timer)
+    server.closeAllConnections?.()
+    server.close()
+    const recordPath = path.join(historyDir, `r${revision}.json`)
+    await writeFile(recordPath, JSON.stringify({ ...result, revision, file: page.file, at: new Date().toISOString() }, null, 2) + "\n")
+    return { ...result, revision, record: path.relative(root, recordPath).split(path.sep).join("/"), url, diagramWarnings: diagramNotes }
+  })
+  return { url, revision, outcome, cancel: () => settle({ decision: "cancelled", comment: "", annotations: [] }) }
 }
 
 interface HistoryEntry {
