@@ -192,7 +192,7 @@ def _is_forwarding_module(mod, index: RepoIndex) -> bool:
     has_internal_import = False
     for stmt in body:
         if isinstance(stmt, ast.ImportFrom):
-            if stmt.level or (stmt.module or "").split(".")[0] in index.internal_tops:
+            if stmt.level or index.is_internal(stmt.module or ""):
                 has_internal_import = True
             elif stmt.module != "__future__":
                 return False
@@ -224,7 +224,7 @@ def scan_compat(index: RepoIndex, out: list[Finding]) -> None:
                                "module only re-exports names from other internal modules: import from the source "
                                "and delete this module"))
         for ref in mod.imports:
-            if ref.guarded == "try-except-ImportError" and ref.target.split(".")[0] in index.internal_tops:
+            if ref.guarded == "try-except-ImportError" and index.is_internal(ref.target):
                 out.append(Finding("compat-shim", "high", mod.path, ref.line,
                                    f"internal import of `{ref.target}` wrapped in try/except ImportError"))
         for node in ast.walk(mod.tree):

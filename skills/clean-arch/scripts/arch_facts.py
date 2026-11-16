@@ -742,7 +742,10 @@ def verify_diagram(index: RepoIndex, facts: dict, source: str) -> list[tuple[int
                 return (mod.name if mod else rel.removesuffix("/").replace("/", ".")
                         if rel.replace("/", ".").strip(".") in prefixes else None), True
             return None, rel.split("/")[0] not in index.internal_tops and not (index.root / rel.split("/")[0]).exists()
-        if token.split(".")[0] not in index.internal_tops:
+        if not index.is_internal(token):
+            return None, True
+        token = index.canonical(token)
+        if not token:
             return None, True
         if token in prefixes:
             return token, True
@@ -836,7 +839,7 @@ TEXT_NAMES = ("Dockerfile", "Makefile", "Procfile", "Justfile")
 
 def importers(index: RepoIndex, target: str, limit: int) -> str:
     """Everything that references a module or package: imports (tests included) and text mentions."""
-    target = target.strip().strip("/").replace("/", ".").removesuffix(".py")
+    target = index.canonical(target.strip().strip("/").replace("/", ".").removesuffix(".py"))
     inside = lambda name: name == target or name.startswith(target + ".")  # noqa: E731
     imports: list[str] = []
     import_lines: set[tuple[str, int]] = set()
@@ -849,8 +852,13 @@ def importers(index: RepoIndex, target: str, limit: int) -> str:
                 where = f"`{mod.path}:{ref.line}`" + (" (test)" if mod.is_test else "")
                 imports.append(f"- {where} imports `{', '.join(hits) or ref.target}`")
                 import_lines.add((mod.path, ref.line))
+    # Text mentions may spell the module with or without the src/ prefix.
+    spellings = {target, f"src.{target}", target.removeprefix("src.")} if index.src_tops else {target}
+    as_paths = {s.replace(".", "/") for s in spellings}
     as_path = target.replace(".", "/")
-    pattern = re.compile(rf"(?<![\w.]){re.escape(target)}(?![\w])|(?<![\w/]){re.escape(as_path)}(?:\.py|/|\b)")
+    pattern = re.compile("|".join(
+        [rf"(?<![\w.]){re.escape(s)}(?![\w])" for s in sorted(spellings)]
+        + [rf"(?<![\w/]){re.escape(p)}(?:\.py|/|\b)" for p in sorted(as_paths)]))
     texts = [(m.path, m.source) for m in index.modules.values() if not inside(m.name)]
     for rel in list(index.other_files) + [f.path for f in index.frontend]:
         p = Path(rel)

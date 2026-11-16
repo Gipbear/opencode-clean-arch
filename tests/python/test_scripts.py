@@ -200,5 +200,93 @@ class ArchFactsTest(FixtureRepo):
         self.assertIn("violation(s)", result.stdout, result.stderr)
 
 
+def write_repo(root: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
+SRC_FILES = {
+    "src/__init__.py": "",
+    "src/pkg/__init__.py": "",
+    "src/pkg/a.py": "from {p}pkg import b\nfrom {p}pkg.c import thing\n\n\ndef run():\n    return b.helper() + thing()\n",
+    "src/pkg/b.py": "from {p}pkg.c import thing\n\n\ndef helper():\n    return thing()\n",
+    "src/pkg/c.py": "def thing():\n    return 1\n",
+    "src/other/__init__.py": "",
+    "src/other/use.py": "from {p}pkg.a import run\nfrom {p}pkg.c import nothing\n",
+    "tests/test_a.py": "from {p}pkg.a import run\n",
+    "run.sh": "python -m {p}pkg.a\n",
+}
+
+
+class SrcLayoutTest(unittest.TestCase):
+    """Repositories keep code under src/ but may import it as `src.pkg` or as `pkg`."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.repo = self.tmp / "repo"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def make(self, prefix: str, overrides: dict[str, str] | None = None) -> None:
+        files = {rel: text.replace("{p}", prefix) for rel, text in SRC_FILES.items()}
+        write_repo(self.repo, {**files, **(overrides or {})})
+
+    def facts(self) -> dict:
+        result = run("arch_facts.py", self.repo, "json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def check_edges(self, pkg: str, facts: dict) -> None:
+        edges = {(e["from"], e["to"]) for e in facts["module_edges"]}
+        self.assertIn((f"{pkg}.a", f"{pkg}.b"), edges)
+        self.assertIn((f"{pkg}.a", f"{pkg}.c"), edges)
+        self.assertIn((f"{pkg}.b", f"{pkg}.c"), edges)
+
+    def test_src_prefixed_imports_resolve(self):
+        self.make("src.")
+        facts = self.facts()
+        self.check_edges("src.pkg", facts)
+        self.assertEqual([u["import"] for u in facts["unresolved_internal_imports"]], ["src.pkg.c.nothing"])
+
+    def test_unprefixed_imports_resolve(self):
+        self.make("")
+        self.check_edges("pkg", self.facts())
+
+    def test_mixed_spellings_meet_in_one_module(self):
+        self.make("src.", {"src/pkg/b.py": "from pkg.c import thing\n\n\ndef helper():\n    return thing()\n"})
+        self.check_edges("src.pkg", self.facts())
+
+    def test_importers_accepts_both_spellings(self):
+        self.make("src.")
+        for target in ["src.pkg.a", "pkg.a", "src/pkg/a.py"]:
+            out = run("arch_facts.py", self.repo, "importers", target).stdout
+            self.assertIn("`src/other/use.py:1`", out, target)
+            self.assertIn("`tests/test_a.py:1` (test)", out, target)
+            self.assertIn("`run.sh:1`", out, target)
+
+    def test_leftover_scan_reports_only_the_real_broken_import(self):
+        for prefix in ["src.", ""]:
+            shutil.rmtree(self.repo, ignore_errors=True)
+            self.make(prefix)
+            result = run("leftover_scan.py", self.repo, "--format", "json", "--fail-on", "never")
+            broken = [f for f in json.loads(result.stdout) if f["category"] == "broken-import"]
+            self.assertEqual([f["path"] for f in broken], ["src/other/use.py"], prefix)
+
+    def test_try_except_around_a_src_import_is_a_compat_shim(self):
+        self.make("src.", {"src/pkg/a.py": "try:\n    from src.pkg.c import thing\nexcept ImportError:\n    thing = None\n"})
+        result = run("leftover_scan.py", self.repo, "--format", "json", "--fail-on", "never")
+        self.assertTrue(any(f["category"] == "compat-shim" and f["path"] == "src/pkg/a.py"
+                            for f in json.loads(result.stdout)), result.stdout)
+
+    def test_import_cycle_through_src_prefix_is_found(self):
+        self.make("src.", {"src/pkg/c.py": "from src.pkg import a\n\n\ndef thing():\n    return a\n"})
+        facts = self.facts()
+        cycles = [sorted(c) for c in facts["module_cycles"]]
+        self.assertTrue(any("src.pkg.a" in c and "src.pkg.c" in c for c in cycles), facts["module_cycles"])
+
+
 if __name__ == "__main__":
     unittest.main()

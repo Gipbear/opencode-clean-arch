@@ -113,10 +113,32 @@ class RepoIndex:
     frontend: list[FrontendFile]
     other_files: list[str]
     internal_tops: set[str]
+    # src/ layout: modules under src/ are named the way the repository imports them, either
+    # `pkg.mod` (src is a path-only directory) or `src.pkg.mod`; `canonical` accepts both spellings.
+    src_prefixed: bool = False
+    src_tops: set[str] = field(default_factory=set)
+
+    def canonical(self, dotted: str) -> str:
+        """Rewrite a dotted name written with or without the `src.` prefix into this index's spelling."""
+        if not self.src_tops:
+            return dotted
+        first = dotted.split(".")[0]
+        if self.src_prefixed:
+            return f"src.{dotted}" if first in self.src_tops and first != "src" else dotted
+        if first == "src" and "src" not in self.internal_tops:
+            return dotted[4:]
+        return dotted
+
+    def is_internal(self, dotted: str) -> bool:
+        """True when the dotted name starts at a package or module of this repository."""
+        first = dotted.split(".")[0]
+        if self.src_tops and first == "src":
+            return True
+        return self.canonical(dotted).split(".")[0] in self.internal_tops
 
     def resolve(self, importer: Module, ref: ImportRef) -> list[tuple[str, str | None]]:
         """Map an import to (internal module, imported name or None) pairs."""
-        base = ref.target
+        base = ref.target if ref.level else self.canonical(ref.target)
         if ref.level:
             pkg_parts = importer.name.split(".")
             if not importer.is_package_init:
@@ -125,6 +147,8 @@ class RepoIndex:
                 return []
             pkg_parts = pkg_parts[: len(pkg_parts) - (ref.level - 1)]
             base = ".".join([p for p in pkg_parts + ([ref.target] if ref.target else []) if p])
+        if not base and self.src_tops and ref.is_from and not ref.level and ref.target == "src":
+            return [(name, None) if name in self.modules else ("", name) for name in ref.names]
         if not base:
             return []
         if base.split(".")[0] not in self.internal_tops:
@@ -144,7 +168,7 @@ class RepoIndex:
         return results
 
     def _longest_module(self, dotted: str) -> str | None:
-        parts = dotted.split(".")
+        parts = self.canonical(dotted).split(".")
         for i in range(len(parts), 0, -1):
             candidate = ".".join(parts[:i])
             if candidate in self.modules:
@@ -167,7 +191,7 @@ def list_files(root: Path) -> list[str]:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         for fn in filenames:
-            found.append(os.path.relpath(os.path.join(dirpath, fn), root))
+            found.append(Path(os.path.relpath(os.path.join(dirpath, fn), root)).as_posix())
     return sorted(found)
 
 
@@ -475,9 +499,26 @@ def build_index(root: Path, include: list[str] | None = None) -> RepoIndex:
             frontend.append(_frontend_file(root, rel))
         else:
             other.append(rel)
+    src_tops = {m.name.split(".")[0] for m in modules.values() if m.path.startswith("src/") and m.name != "__root__"}
+    src_prefixed = False
+    if src_tops:
+        with_src = without_src = 0
+        for mod in modules.values():
+            for ref in mod.imports:
+                first = ref.target.split(".")[0] if not ref.level else ""
+                with_src += first == "src"
+                without_src += first in src_tops
+        src_prefixed = with_src > without_src
+    if src_prefixed:
+        for mod in by_path.values():
+            if mod.path == "src/__init__.py":
+                mod.name = "src"
+            elif mod.path.startswith("src/") and not mod.name.startswith("src."):
+                mod.name = f"src.{mod.name}"
+        modules = {mod.name: mod for mod in by_path.values() if mod.path.endswith(".py")}
     tops = {name.split(".")[0] for name in modules}
     return RepoIndex(root=root, modules=modules, by_path=by_path, frontend=frontend,
-                     other_files=other, internal_tops=tops)
+                     other_files=other, internal_tops=tops, src_prefixed=src_prefixed, src_tops=src_tops)
 
 
 def comment_tokens(source: str) -> list[tuple[int, str]]:
