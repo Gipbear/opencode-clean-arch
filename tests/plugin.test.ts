@@ -25,6 +25,7 @@ describe("skills", () => {
       "clean-arch",
       "clean-finish",
       "comment-hygiene",
+      "perf-tune",
       "restructure-modules",
       "simplify-code",
     ])
@@ -73,7 +74,7 @@ describe("opencode 2.x setup()", () => {
 
   test("registers skills, commands and tools", async () => {
     const { added } = await setup(fixtureCopy())
-    expect(added.skill).toHaveLength(8)
+    expect(added.skill).toHaveLength(9)
     expect(added.skill[0].path.startsWith(SKILLS_DIR)).toBe(true)
     expect(added.command.map((c) => c.name)).toEqual(["clean-arch", "arch-diagnose", "arch-map", "clean-finish", "arch-review"])
     expect(added.tool.map((t) => t.name)).toEqual(["clean_arch_facts", "clean_arch_leftovers", "clean_arch_render", "clean_arch_review"])

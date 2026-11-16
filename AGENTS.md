@@ -1,6 +1,6 @@
 # AGENTS.md
 
-opencode 插件 `opencode-clean-arch`：把“诊断 → 方案评审 → 执行重构 → 收尾门禁 → 架构文档”做成 8 个
+opencode 插件 `opencode-clean-arch`：把“诊断 → 方案评审 → 执行重构 → 收尾门禁 → 架构文档”做成 9 个
 skill、5 个命令和 4 个工具，同一个包同时支持 opencode V1（1.x，`@opencode-ai/plugin`）和 V2（2.x，`@opencode/cli`）。
 用户说明见 `README.md`（中文）。开发过程和未完成事项见本地文件 `docs/HANDOFF.md`（不入库）。
 
@@ -25,7 +25,7 @@ skill、5 个命令和 4 个工具，同一个包同时支持 opencode V1（1.x�
 | `src/render.ts` | Mermaid → 自包含 SVG（beautiful-mermaid，展开 CSS 变量和 color-mix），以及渲染警告 |
 | `src/review/` | 检视页面：node:http 服务、页面（中文 UI）、Markdown 渲染、行级 diff、历史轮次 |
 | `src/cli.ts` | `bun src/cli.ts render|review`，不经 opencode 使用 |
-| `skills/` | 8 个 skill；`clean-arch/scripts/` 是只用标准库的 Python 分析脚本 |
+| `skills/` | 9 个 skill；`clean-arch/scripts/` 是只用标准库的 Python 分析脚本 |
 | `skills/arch-map/references/templates/` | 4+1 文档模板（中文）和 `ai/` 下给 AI 的模板 |
 | `tests/` | `plugin.test.ts`、`review.test.ts`（bun test）；`python/test_scripts.py`（unittest）；`fixtures/sample_repo` 是故意埋了各种问题的样例仓库 |
 

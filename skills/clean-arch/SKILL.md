@@ -144,3 +144,4 @@ Reply in the user's language, at most one screen:
 | "plan a cleanup" | phases 0–2 |
 | "simplify this file/function" | `simplify-code` on that scope, then `clean-finish` on the diff |
 | "check for leftovers" | `clean-finish` only |
+| "make it faster / why is it slow" | `perf-tune`, preferably after the cleanup so one implementation is measured; this workflow does not tune performance by itself |
