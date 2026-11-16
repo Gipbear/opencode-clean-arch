@@ -120,7 +120,7 @@ ssh -L 47123:127.0.0.1:47123 <开发机>
 ## 产出物
 
 ```text
-docs/architecture/            给人看，提交进仓库：每页 ≤ ~80 行，表格优先
+docs/architecture/            给人看：每页 ≤ ~80 行，表格优先；写入工作区但不自动提交
   README.md                   概览 + 系统上下文图 + 视图导航
   logical.md                  逻辑视图：核心类图（≤15 个类）
   development.md              开发视图：模块依赖、分层规则、新代码放哪里
@@ -140,6 +140,8 @@ docs/architecture/            给人看，提交进仓库：每页 ≤ ~80 行�
 ```
 
 `.clean-arch/` 只是工作状态，换一台机器或重新克隆后不会有；需要长期留给团队的信息都写进 `docs/architecture/`。
+
+Agent 不会自己 `git commit` 或 `git push`：重构的改动和 `docs/architecture/` 都留在工作区，生成的文档质量参差，先检查（Agent 会指出推断较多的页面），满意后再手动提交。
 
 **关于 CodeHub 预览**：CodeHub（CodeArts Repo）目前没有文档化的 Mermaid 渲染（社区仍在提需求），HTML 文件在仓库页面里通常只显示源码而不会作为网页预览，因此文档里用 `![](diagrams/x.svg)` 嵌入 SVG 图片，同时保留 `.mmd` 源码便于修改。SVG 由插件本地渲染，颜色已写死、不引用外部字体，在 CodeHub、GitHub、GitLab、Gitee 和 IDE 预览里显示一致。
 

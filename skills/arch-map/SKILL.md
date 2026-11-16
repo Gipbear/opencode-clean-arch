@@ -91,7 +91,10 @@ project's `AGENTS.md`/`CLAUDE.md`; they override this skill.
    - The page and diagram budgets hold. If a diagram has more than 20 nodes, split it by
      package or collapse the leaves.
 7. Tell the user where the docs are, which page to read first, and list anything you could
-   not determine (for example, the deployment topology when no deploy files exist).
+   not determine (for example, the deployment topology when no deploy files exist). Say that
+   `docs/architecture/` is left uncommitted for them to review: generated pages vary in quality,
+   so do not `git add` or commit them yourself. Mention which pages are the weakest or most
+   inferred (the "(推断)" / "(inferred)" marks) so the review starts there.
 
 ## Updating existing docs
 

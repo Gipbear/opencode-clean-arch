@@ -45,8 +45,12 @@ add `.clean-arch/` to the repository's local ignore file (the path printed by
 `git rev-parse --git-path info/exclude`), so tracked files such as `.gitignore` stay untouched;
 use `.gitignore` only if the project instructions ask for that. Plans, reviews and the agent
 index stay on this machine. What other people and later sessions must see belongs in
-`docs/architecture/`, which is committed. Helper scripts you write for checks go to
+`docs/architecture/`; it is written to the working tree but **not committed by you**: the user
+reviews the pages and commits them by hand. Helper scripts you write for checks go to
 `.clean-arch/cache/`.
+
+Do not run `git commit`, `git push`, `git stash`, `git reset` or branch-switching commands unless
+the user asks. Leave all changes, including the documents, uncommitted in the working tree.
 
 ## Tools
 
