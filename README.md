@@ -120,7 +120,7 @@ ssh -L 47123:127.0.0.1:47123 <开发机>
 ## 产出物
 
 ```text
-docs/architecture/            给人看：每页 ≤ ~80 行，表格优先
+docs/architecture/            给人看，提交进仓库：每页 ≤ ~80 行，表格优先
   README.md                   概览 + 系统上下文图 + 视图导航
   logical.md                  逻辑视图：核心类图（≤15 个类）
   development.md              开发视图：模块依赖、分层规则、新代码放哪里
@@ -130,14 +130,16 @@ docs/architecture/            给人看：每页 ≤ ~80 行，表格优先
   data.md                     数据视图（ML/数据项目）：数据集、模型、产物流向
   decisions.md                设计决策（ADR 精简版）
   diagrams/*.mmd + *.svg      Mermaid 源码与渲染结果
-.clean-arch/                  给 AI 看，人无需关心
+.clean-arch/                  给 AI 看，只在本机，不提交（自动加入 .git/info/exclude）
   modules.md                  模块索引：职责、依赖、新代码放哪
   glossary.md                 术语 ↔ 代码名
   rules.toml                  分层/禁止依赖/规模预算，clean_arch_facts check 校验
   baseline.md diagnosis.md plan.md finish-report.md
   plans/ reviews/             已批准方案与评审历史
-  cache/                      临时文件（已加入 .gitignore）
+  cache/                      临时文件
 ```
+
+`.clean-arch/` 只是工作状态，换一台机器或重新克隆后不会有；需要长期留给团队的信息都写进 `docs/architecture/`。
 
 **关于 CodeHub 预览**：CodeHub（CodeArts Repo）目前没有文档化的 Mermaid 渲染（社区仍在提需求），HTML 文件在仓库页面里通常只显示源码而不会作为网页预览，因此文档里用 `![](diagrams/x.svg)` 嵌入 SVG 图片，同时保留 `.mmd` 源码便于修改。SVG 由插件本地渲染，颜色已写死、不引用外部字体，在 CodeHub、GitHub、GitLab、Gitee 和 IDE 预览里显示一致。
 

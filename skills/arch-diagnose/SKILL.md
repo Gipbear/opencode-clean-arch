@@ -6,6 +6,8 @@ description: Read-only architecture diagnosis of a Python (and small frontend) c
 # Architecture diagnosis
 
 Read-only. Write only `.clean-arch/diagnosis.md` (and scratch files under `.clean-arch/cache/`).
+`.clean-arch/` is never committed: if it is not ignored yet, add it to the local ignore file
+(`git rev-parse --git-path info/exclude`) before writing there.
 
 The facts scripts live in the `clean-arch` skill (`../clean-arch/scripts/` relative to this
 file). Prefer the `clean_arch_facts` and `clean_arch_leftovers` tools when they are available.

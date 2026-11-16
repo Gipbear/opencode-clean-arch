@@ -14,7 +14,7 @@ Two audiences, two places:
 | Place | Audience | Size |
 |---|---|---|
 | `docs/architecture/` | humans | each page ≤ ~80 lines, each diagram ≤ 20 nodes and ≤ ~1000 px wide; tables over prose |
-| `.clean-arch/` | agents | as detailed as useful; humans need not read it |
+| `.clean-arch/` | agents on this machine; local only, never committed | as detailed as useful; humans need not read it |
 
 Write human docs in the language the project instructions ask for, otherwise the language the
 project's docs mostly use. Keep code identifiers as they are. Follow the conventions in the
@@ -22,7 +22,8 @@ project's `AGENTS.md`/`CLAUDE.md`; they override this skill.
 
 ## Procedure
 
-1. **Facts.** Add `.clean-arch/cache/` to `.gitignore` first. Then run `clean_arch_facts`
+1. **Facts.** Make sure `.clean-arch/` is ignored locally first (see the `clean-arch` skill:
+   `git rev-parse --git-path info/exclude`). Then run `clean_arch_facts`
    summary, `json` (saved to `.clean-arch/cache/facts.json`), `mermaid --view packages` and
    `mermaid --view classes` with `focus` per subsystem. The class draft is ranked by
    architectural weight (abstractions with subclasses, classes holding collaborators, size);
@@ -73,9 +74,10 @@ project's `AGENTS.md`/`CLAUDE.md`; they override this skill.
      `.clean-arch/modules.md`.
    - In `AGENTS.md` (create it if missing; keep existing content and follow its own rules
      about what belongs there), add or update a short "Architecture" section that points to
-     `docs/architecture/README.md` and `.clean-arch/modules.md` and tells agents to put code
-     where `modules.md` says. If the repo uses this plugin, also tell them to run the
-     `clean-finish` gate before finishing. A `CLAUDE.md` that only imports `AGENTS.md` stays
+     `docs/architecture/README.md` and tells agents to put code where
+     `docs/architecture/development.md` says. Do not point at `.clean-arch/`: it is not
+     committed, so other clones do not have it. If the repo uses this plugin, also tell them to
+     run the `clean-finish` gate before finishing. A `CLAUDE.md` that only imports `AGENTS.md` stays
      as it is.
 6. **Verify against the code** (anti-fabrication):
    - Run `clean_arch_facts` with `command: verify` on `docs/architecture` (it reads `.mmd`

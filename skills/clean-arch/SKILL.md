@@ -40,9 +40,13 @@ This skill orchestrates the others. Load each one when its phase starts:
 7. **Language.** Human-facing text uses the language the project instructions ask for,
    otherwise the language of the user's request. Code identifiers stay as they are.
 
-`.clean-arch/` is committed with the work (plans, reviews and the module index give later agents
-context), except `.clean-arch/cache/`, which is scratch space and gitignored. Helper scripts you
-write for checks go to `.clean-arch/cache/`.
+`.clean-arch/` is local working state and is never committed. Before writing anything there,
+add `.clean-arch/` to the repository's local ignore file (the path printed by
+`git rev-parse --git-path info/exclude`), so tracked files such as `.gitignore` stay untouched;
+use `.gitignore` only if the project instructions ask for that. Plans, reviews and the agent
+index stay on this machine. What other people and later sessions must see belongs in
+`docs/architecture/`, which is committed. Helper scripts you write for checks go to
+`.clean-arch/cache/`.
 
 ## Tools
 
@@ -65,6 +69,7 @@ review tool, show the plan path and ask the user to approve it in chat.
 
 - Scope is the whole repository unless the user named a subsystem (`$ARGUMENTS` of
   `/clean-arch`, or the request).
+- Make sure `.clean-arch/` is ignored locally (see above) before writing any file there.
 - Find the test command (project instructions first, then pytest config, `tests/`, Makefile,
   CI files, README). Run it once with `PYTHONDONTWRITEBYTECODE=1` so the read-only phases leave
   no `__pycache__` behind. Record the result as the baseline, including tests that already fail.
