@@ -21,6 +21,20 @@ file). Prefer the `clean_arch_facts` and `clean_arch_leftovers` tools when they 
      git log --since=6.months --name-only --format= -- '*.py' | sort | uniq -c | sort -rn |
        while read n f; do [ -f "$f" ] && echo "$n $f"; done | head -30
      ```
+   **Check the facts before trusting them.** The scripts parse imports statically, so an import
+   style they do not understand silently removes edges from the graph: modules then look
+   unreferenced, and cycles and coupling look better or worse than they are. Do this check
+   whenever the output contains a "Warning" line or a section about imports treated as external,
+   or when more than a third of the modules are reported as unreferenced or never imported:
+   - pick three reported modules or classes and `rg -n "<module name>|<ClassName>"` for them,
+     including `from src.<pkg>` and `from <pkg>` spellings;
+   - if `rg` finds real imports or uses that the tool missed, stop: write the mismatch under
+     "Open questions" in the diagnosis and tell the user. Do not rank findings, propose
+     deletions or draw dependency diagrams from that output. Typical causes are a source root
+     the scripts do not know (`backend/` on `PYTHONPATH`), string-based or dynamic imports,
+     and plugin or registry loading;
+   - if `rg` confirms the reports, say so in one line in "Numbers" (for example "spot-checked 3
+     unreferenced modules with rg: confirmed").
 2. **Understand intent before judging.** Read the project instruction files (`AGENTS.md`,
    `CLAUDE.md`) first, then the README, entry points (CLI scripts, `__main__`, servers,
    notebooks) and the main config files. Write down in one sentence what the system does and

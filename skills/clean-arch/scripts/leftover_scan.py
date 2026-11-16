@@ -396,9 +396,28 @@ def scan_unreferenced(index: RepoIndex, out: list[Finding]) -> None:
         out.append(Finding("unreferenced", "low", mod.path, 1, "module is never imported and is not an entry point"))
 
 
-def render_md(findings: list[Finding], limit: int) -> str:
+def sanity_warnings(index: RepoIndex, findings: list[Finding]) -> list[str]:
+    """Signs that the import graph is incomplete, which makes `unreferenced` findings unreliable."""
+    warnings = []
+    roots = index.suspected_source_roots()
+    if roots:
+        names = ", ".join(f"`{r['import_root']}` ({r['imports']}x, under `{r['container']}/`)" for r in roots[:5])
+        warnings.append(f"imports treated as external although the repository has a package of that name: {names}. "
+                        "If these are internal, the import graph is missing edges: check with `rg` before trusting "
+                        "`unreferenced`, cycles or importers.")
+    candidates = [m for m in index.modules.values() if not m.is_test and not m.is_package_init and not m.has_main_guard]
+    never = {f.path for f in findings if f.category == "unreferenced" and "never imported" in f.message}
+    if len(candidates) >= 8 and len(never) / len(candidates) >= 0.5:
+        warnings.append(f"{len(never)} of {len(candidates)} modules are reported as never imported. That is rarely "
+                        "true: pick three of them and run `rg` for their import lines before trusting this list.")
+    return warnings
+
+
+def render_md(findings: list[Finding], limit: int, warnings: list[str] | None = None) -> str:
+    banner = "".join(f"> Warning: {w}\n" for w in warnings or [])
+    banner += "\n" if banner else ""
     if not findings:
-        return "No leftovers found.\n"
+        return banner + "No leftovers found.\n"
     by_cat: dict[str, list[Finding]] = defaultdict(list)
     for f in findings:
         by_cat[f.category].append(f)
@@ -413,7 +432,7 @@ def render_md(findings: list[Finding], limit: int) -> str:
         if len(items) > limit:
             lines.append(f"- ... {len(items) - limit} more")
         lines.append("")
-    return "\n".join(lines)
+    return banner + "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -439,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
         if name not in args.skip:
             scanner(index, findings)
     findings = [f for f in findings if f.category not in args.skip]
+    warnings = sanity_warnings(index, findings)
     if args.since:
         scope = changed_files(root, args.since)
         findings = [f for f in findings if f.path in scope or scope.intersection(f.related)]
@@ -455,8 +475,10 @@ def main(argv: list[str] | None = None) -> int:
             unique.append(f)
     if args.format == "json":
         print(json.dumps([asdict(f) for f in unique], indent=1, ensure_ascii=False))
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
     else:
-        print(render_md(unique, args.limit), end="")
+        print(render_md(unique, args.limit, warnings), end="")
     if args.fail_on == "never":
         return 0
     threshold = SEVERITY_ORDER[args.fail_on]

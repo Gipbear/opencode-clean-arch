@@ -77,7 +77,8 @@ review tool, show the plan path and ask the user to approve it in chat.
   main CLI with `--help`, and run one small end-to-end command when one exists.
 - Run `clean_arch_facts` (summary, and `brief: true` for the numbers table) and
   `clean_arch_leftovers`. Record the headline numbers: files, lines, duplicates, cycles, broken
-  imports, and leftovers by severity.
+  imports, and leftovers by severity. If either output carries a "Warning" about incomplete
+  imports, spot-check with `rg` as described in `arch-diagnose` before using the numbers.
 - Note the git state: the current branch, uncommitted changes (ask before touching a dirty
   tree), and the base commit. Later phases diff against this base.
 - Write `.clean-arch/baseline.md`: test command and result, the headline numbers, and the

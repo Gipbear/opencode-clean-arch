@@ -424,6 +424,7 @@ def collect(index: RepoIndex, include_tests: bool, depth: int) -> dict:
         "process_calls": calls,
         "process_edges": [{"from": a, "to": b} for a, b in process_edges if a != b],
         "unresolved_internal_imports": unresolved,
+        "suspected_source_roots": index.suspected_source_roots(),
         "classes": class_facts(index, include_tests),
         "hotspots": hotspots(index),
         "duplicates": duplicates(index),
@@ -438,6 +439,9 @@ def fmt_brief(facts: dict) -> str:
         ("Frontend files / lines", f"{t['frontend_files']} / {t['frontend_lines']}"),
         ("Package cycles / module cycles", f"{len(facts['package_cycles'])} / {len(facts['module_cycles'])}"),
         ("Unresolved internal imports", str(len(facts["unresolved_internal_imports"]))),
+        *([("Imports that may point at a missing source root",
+            ", ".join(f"`{r['import_root']}` ({r['imports']})" for r in facts["suspected_source_roots"][:5]))]
+          if facts["suspected_source_roots"] else []),
         ("Identical files (groups)", str(len(d["identical_files"]))),
         ("Copied / renamed-copy function groups", f"{len(d['functions'])} / {len(d['renamed_functions'])}"),
         (f"Modules >= {BIG_MODULE} lines / classes >= {BIG_CLASS} lines",
@@ -474,6 +478,12 @@ def fmt_summary(facts: dict, limit: int) -> str:
     section("Module-level import cycles", facts["module_cycles"], lambda c: " <-> ".join(f"`{n}`" for n in c))
     section("Unresolved internal imports", facts["unresolved_internal_imports"],
             lambda u: f"`{u['path']}:{u['line']}` imports `{u['import']}`")
+    section("Imports treated as external although the repository has a package of that name "
+            "(missing source root? cycles, importers and unreferenced results are unreliable until checked)",
+            facts["suspected_source_roots"],
+            lambda r: f"`{r['import_root']}` is imported {r['imports']} times (e.g. `{r['example']}`) "
+                      f"but the repository has it under `{r['container']}/`; third-party names that match a "
+                      f"directory also show up here")
     fan_in: Counter = Counter()
     fan_out: Counter = Counter()
     for e in facts["package_edges"]:

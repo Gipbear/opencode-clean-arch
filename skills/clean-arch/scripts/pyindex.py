@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import subprocess
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -135,6 +136,33 @@ class RepoIndex:
         if self.src_tops and first == "src":
             return True
         return self.canonical(dotted).split(".")[0] in self.internal_tops
+
+    def suspected_source_roots(self) -> list[dict]:
+        """Absolute imports treated as external although a package or module of that name sits deeper in the tree.
+
+        Typical cause: code lives under `backend/pkg/` and runs with `backend` on PYTHONPATH, so the imports
+        read `from pkg import x`. Every such import is missing from the graph, which makes modules look
+        unreferenced and hides cycles. Third-party names that happen to match a directory also show up here.
+        """
+        nested: dict[str, Counter] = defaultdict(Counter)
+        for mod in self.modules.values():
+            parts = list(Path(mod.path).with_suffix("").parts)
+            if parts[-1] == "__init__":
+                parts = parts[:-1]
+            for k in range(1, len(parts)):
+                nested[parts[k]]["/".join(parts[:k])] += 1
+        counts: Counter = Counter()
+        example: dict[str, str] = {}
+        for mod in self.modules.values():
+            for ref in mod.imports:
+                if ref.level or not ref.target or self.is_internal(ref.target):
+                    continue
+                first = ref.target.split(".")[0]
+                if first in nested:
+                    counts[first] += 1
+                    example.setdefault(first, f"{mod.path}:{ref.line}")
+        return [{"import_root": name, "container": nested[name].most_common(1)[0][0], "imports": n,
+                 "example": example[name]} for name, n in counts.most_common()]
 
     def resolve(self, importer: Module, ref: ImportRef) -> list[tuple[str, str | None]]:
         """Map an import to (internal module, imported name or None) pairs."""

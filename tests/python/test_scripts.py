@@ -281,6 +281,31 @@ class SrcLayoutTest(unittest.TestCase):
         self.assertTrue(any(f["category"] == "compat-shim" and f["path"] == "src/pkg/a.py"
                             for f in json.loads(result.stdout)), result.stdout)
 
+    def test_imports_from_a_missing_source_root_are_flagged(self):
+        write_repo(self.repo, {
+            "backend/pkg/__init__.py": "",
+            "backend/pkg/a.py": "import json\nfrom pkg import b\n",
+            "backend/pkg/b.py": "def f():\n    return 1\n",
+            "backend/app.py": "from pkg.a import f\n",
+        })
+        roots = self.facts()["suspected_source_roots"]
+        self.assertEqual([(r["import_root"], r["container"], r["imports"]) for r in roots], [("pkg", "backend", 2)])
+        summary = run("arch_facts.py", self.repo, "summary").stdout
+        self.assertIn("missing source root?", summary)
+        self.assertIn("`pkg` is imported 2 times", summary)
+        scan = run("leftover_scan.py", self.repo).stdout
+        self.assertIn("> Warning: imports treated as external", scan)
+
+    def test_no_source_root_warning_when_imports_resolve(self):
+        self.make("src.")
+        self.assertEqual(self.facts()["suspected_source_roots"], [])
+        self.assertNotIn("Warning", run("leftover_scan.py", self.repo).stdout)
+
+    def test_warns_when_most_modules_look_unreferenced(self):
+        write_repo(self.repo, {f"pkg/m{i}.py": f"def f{i}():\n    return {i}\n" for i in range(10)})
+        scan = run("leftover_scan.py", self.repo).stdout
+        self.assertIn("10 of 10 modules are reported as never imported", scan)
+
     def test_import_cycle_through_src_prefix_is_found(self):
         self.make("src.", {"src/pkg/c.py": "from src.pkg import a\n\n\ndef thing():\n    return a\n"})
         facts = self.facts()
