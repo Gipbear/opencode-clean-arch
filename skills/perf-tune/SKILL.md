@@ -76,7 +76,10 @@ bottleneck before choosing a fix:
 | Import and initialisation | heavy top-level imports on the CLI path | `-X importtime`, deferred imports |
 | GPU idle | data loading, host-device syncs, small kernels | `DataLoader`, `.item()` in loops, `torch.compile` |
 
-Verify surprising profile results with a second tool or a direct `timeit` of the suspect.
+Verify surprising profile results with a second tool or a direct `timeit` of the suspect. When
+the hot frames are inside a third-party library, read its section in `references/libraries.md`
+before looking for a rewrite: the usual fix is how the library is called (bulk API, reused
+object, array layout, thread count), not replacing it.
 
 ### 3. Plan
 
@@ -123,3 +126,7 @@ risky complexity.
   without fooling yourself.
 - `references/techniques.md`: the optimization ladder with when each technique pays off, its
   pitfalls, and the micro-optimizations that are not worth doing.
+- `references/libraries.md`: notes for NumPy, PyTorch, Shapely, pyproj, scikit-learn, laspy/LASzip,
+  OpenCV, protobuf and POT, plus cross-library traps (thread oversubscription, array layout and
+  dtype at boundaries, float32 with large coordinates). Read the sections for the libraries that
+  appear in the profile.
