@@ -2,7 +2,7 @@
 
 让 Agent 写出来的 Python 代码回到**一份实现、职责清晰、没有遗留版本、有图可看**的状态。
 
-这是一个 opencode 插件，包含 9 个 skill、5 个斜杠命令和 4 个工具，同时支持 opencode 1.x 与 2.x：
+这是一个 opencode 插件，包含 9 个 skill、5 个斜杠命令和 5 个工具，同时支持 opencode 1.x 与 2.x：
 
 - **先诊断、再评审、后动手**：诊断和方案阶段只读，方案在浏览器里逐句批注，批准后才改代码；
 - **不留中间版本**：合并/移动时同步更新所有调用方，删除旧实现，不加别名、转发、兼容开关；
@@ -39,6 +39,7 @@
 | `clean_arch_leftovers` | 遗留扫描，支持 `since=<git ref>` 只看本次改动 |
 | `clean_arch_render` | `*.mmd` → 自包含 SVG（颜色写死、无外部字体），适合代码托管平台直接预览；对渲染器不支持的写法和过宽的图给出警告 |
 | `clean_arch_review` | 评审页面，分两步：`open` 启动页面并立即返回链接，`wait` 阻塞等待结论并返回结构化批注 |
+| `clean_arch_perf` | 性能调优辅助（`perf-tune` 用），四个动作：`scan` 静态扫描已知慢模式（循环里建 Transformer/Point、`iterrows`、`np.add.at`、循环里同步 GPU 等），只是线索；`env` 报告项目解释器里影响性能的版本和后端（protobuf、LAZ 解码器、OpenMP、线程数）；`bench` 重复运行命令，给出中位数和波动，并与已保存的基线比较；`lessons` 检索或追加已验证的优化经验 |
 
 ## 安装
 
@@ -117,6 +118,7 @@ ssh -L 47123:127.0.0.1:47123 <开发机>
 | `CLEAN_ARCH_REVIEW_TIMEOUT_MIN` | `120` | 等待评审的分钟数，超时后 Agent 改为在对话中确认 |
 | `CLEAN_ARCH_REVIEW_NO_OPEN` | — | 设为 `1` 不自动打开浏览器 |
 | `CLEAN_ARCH_PYTHON` | `python3` | 运行分析脚本的 Python |
+| `CLEAN_ARCH_LESSONS` | `~/.clean-arch/perf-lessons.md` | `perf-tune` 积累的优化经验文件（用户级，所有项目共用，不进仓库）；Agent 只在实测有效或实测无效时追加，条目里不含路径和项目信息，你可以直接编辑或删除 |
 
 ## 产出物
 

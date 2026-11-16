@@ -15,14 +15,20 @@ function pythonCommand(): string {
 }
 
 /** Run one of the bundled analysis scripts against `root`. The scripts parse code, never import it. */
-export function runScript(script: string, root: string, args: string[], signal?: AbortSignal): Promise<ScriptResult> {
+export function runScript(
+  script: string,
+  root: string,
+  args: string[],
+  signal?: AbortSignal,
+  timeoutMs = 10 * 60_000,
+): Promise<ScriptResult> {
   const python = pythonCommand()
   return new Promise((resolve, reject) => {
     const child = spawn(python, [path.join(SCRIPTS_DIR, script), "--root", root, ...args], {
       cwd: root,
       env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" },
       signal,
-      timeout: 10 * 60_000,
+      timeout: timeoutMs,
     })
     let stdout = ""
     let stderr = ""

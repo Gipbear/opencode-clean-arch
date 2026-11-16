@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -311,6 +312,105 @@ class SrcLayoutTest(unittest.TestCase):
         facts = self.facts()
         cycles = [sorted(c) for c in facts["module_cycles"]]
         self.assertTrue(any("src.pkg.a" in c and "src.pkg.c" in c for c in cycles), facts["module_cycles"])
+
+
+PERF_SOURCE = '''\
+import numpy as np
+from pyproj import Transformer
+from shapely.geometry import Point
+
+
+def project(rows, poly, acc, idx, vals):
+    for r in rows:
+        t = Transformer.from_crs("EPSG:4326", "EPSG:32650", always_xy=True)
+        p = Point(*t.transform(r[0], r[1]))
+        poly.contains(p)
+    np.add.at(acc, idx, vals)
+'''
+
+GOOD_LESSON = "\n".join([
+    "## shapely: contains_xy beats Point + contains",
+    "- status: verified",
+    "- topics: shapely, point-in-polygon",
+    "- symptom: 2M points tested against one polygon in a loop",
+    "- change: shapely.prepare(poly); shapely.contains_xy(poly, x, y)",
+    "- result: 41 s -> 0.9 s (45x), 2M points",
+    "- environment: python 3.11, shapely 2.0.4",
+])
+
+
+class PerfCheckTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.repo = self.tmp / "repo"
+        write_repo(self.repo, {"job.py": PERF_SOURCE, "tests/test_job.py": PERF_SOURCE})
+        self.store = self.tmp / "lessons.md"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def perf(self, *args: str) -> subprocess.CompletedProcess:
+        env = {**os.environ, "CLEAN_ARCH_LESSONS": str(self.store)}
+        return subprocess.run([sys.executable, str(SCRIPTS / "perf_check.py"), "--root", str(self.repo), *args],
+                              capture_output=True, text=True, timeout=120, env=env)
+
+    def test_scan_finds_known_patterns_and_skips_tests(self):
+        result = self.perf("scan", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        found = json.loads(result.stdout)
+        rules = {f["rule"] for f in found}
+        self.assertTrue({"PERF-PROJ-CREATE-LOOP", "PERF-SHAPELY-POINT-LOOP", "PERF-NP-ADD-AT"} <= rules, rules)
+        self.assertTrue(all(f["path"] == "job.py" for f in found), found)
+        with_tests = json.loads(self.perf("scan", "--format", "json", "--include-tests").stdout)
+        self.assertTrue(any(f["path"].startswith("tests/") for f in with_tests))
+
+    def test_scan_markdown_points_at_the_reference(self):
+        out = self.perf("scan").stdout
+        self.assertIn("## PERF-PROJ-CREATE-LOOP", out)
+        self.assertIn("references/libraries.md", out)
+
+    def test_env_reports_the_interpreter(self):
+        result = self.perf("env", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["python"].split(".")[0], str(sys.version_info[0]))
+
+    def test_bench_saves_and_compares(self):
+        (self.repo / "m.py").write_text("import sys\nprint('PERF_METRIC inner=' + sys.argv[1])\n")
+        base = self.perf("bench", "base", "--cmd", f'"{sys.executable}" m.py 0.5', "--runs", "3", "--warmup", "0")
+        self.assertEqual(base.returncode, 0, base.stderr)
+        self.assertTrue((self.repo / ".clean-arch" / "perf" / "bench-base.json").exists())
+        cand = self.perf("bench", "cand", "--cmd", f'"{sys.executable}" m.py 0.1', "--runs", "3", "--warmup", "0",
+                         "--compare", "base")
+        self.assertEqual(cand.returncode, 0, cand.stderr)
+        self.assertRegex(cand.stdout, r"inner \|[^\n]*faster")
+
+    def test_bench_rejects_bad_arguments(self):
+        self.assertNotEqual(self.perf("bench", "x", "--cmd", "echo hi", "--runs", "1").returncode, 0)
+        self.assertNotEqual(self.perf("bench", "bad name", "--cmd", "echo hi").returncode, 0)
+        failing = self.perf("bench", "boom", "--cmd", f'"{sys.executable}" -c "raise SystemExit(3)"', "--runs", "3")
+        self.assertNotEqual(failing.returncode, 0)
+
+    def test_lessons_add_search_and_deduplicate(self):
+        self.assertIn("No lessons recorded", self.perf("lessons").stdout)
+        added = self.perf("lessons", "--entry", GOOD_LESSON)
+        self.assertEqual(added.returncode, 0, added.stderr)
+        text = self.store.read_text(encoding="utf-8")
+        self.assertIn("- date:", text)
+        found = self.perf("lessons", "--query", "shapely polygon").stdout
+        self.assertIn("contains_xy", found)
+        self.assertNotIn("contains_xy", self.perf("lessons", "--query", "opencv").stdout)
+        duplicate = self.perf("lessons", "--entry", GOOD_LESSON)
+        self.assertNotEqual(duplicate.returncode, 0)
+        self.assertEqual(self.store.read_text(encoding="utf-8").count("## shapely"), 1)
+
+    def test_lessons_reject_unmeasured_and_project_specific_entries(self):
+        no_numbers = GOOD_LESSON.replace("41 s -> 0.9 s (45x), 2M points", "much faster")
+        self.assertNotEqual(self.perf("lessons", "--entry", no_numbers).returncode, 0)
+        with_path = GOOD_LESSON.replace("in a loop", "in C:\\Users\\me\\proj")
+        self.assertNotEqual(self.perf("lessons", "--entry", with_path).returncode, 0)
+        unix_path = GOOD_LESSON.replace("in a loop", "in /home/me/proj")
+        self.assertNotEqual(self.perf("lessons", "--entry", unix_path).returncode, 0)
+        self.assertFalse(self.store.exists())
 
 
 if __name__ == "__main__":

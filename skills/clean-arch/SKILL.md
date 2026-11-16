@@ -60,6 +60,7 @@ the user asks. Leave all changes, including the documents, uncommitted in the wo
 | `clean_arch_leftovers` | Leftover scan: parallel versions, duplicates, broken imports, compat shims, commented code, debug output, narrative comments |
 | `clean_arch_review` | `action: "open"` starts the browser review page and returns its URL (show it to the user); `action: "wait"` blocks until the user approves or requests changes |
 | `clean_arch_render` | Renders `*.mmd` diagrams to SVG for code hosts that do not render Mermaid |
+| `clean_arch_perf` | Used by `perf-tune`: static slow-pattern scan, environment probe, repeated benchmark with baseline comparison, and the lessons store |
 
 If the tools are not registered, run the scripts directly from this skill's directory:
 `python3 scripts/arch_facts.py --root <repo> summary` and

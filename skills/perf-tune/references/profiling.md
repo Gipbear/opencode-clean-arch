@@ -65,6 +65,12 @@ Python and package versions that production uses.
 
 ## Benchmarking without fooling yourself
 
+`clean_arch_perf` `bench` implements the warm-up, repeat, median and spread, and baseline
+comparison below for any shell command. Wall time includes interpreter start-up and imports; for
+the part you are changing, have the workload print `PERF_METRIC name=seconds` lines (time only the
+region of interest with `time.perf_counter()`, after loading and warm-up) and `bench` reports and
+compares each metric separately.
+
 - **Same conditions every time**: same machine, input, Python version, power state; nothing else
   heavy running. Do not compare numbers from different machines or Python versions.
 - **Warm up**: discard the first run (imports, caches, JIT, `torch.compile`, CUDA context). Report

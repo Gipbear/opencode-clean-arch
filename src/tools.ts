@@ -136,6 +136,64 @@ const render: ToolSpec = {
   },
 }
 
+const perf: ToolSpec = {
+  name: "clean_arch_perf",
+  description:
+    "Performance helpers for the perf-tune skill. action=scan (default): static candidates for known slow patterns " +
+    "(per-item pyproj Transformer or shapely Point creation, iterrows, np.add.at, array growth in loops, GPU syncs in " +
+    "loops, ...), pattern matches that need a profile to confirm. action=env: versions and backends of the " +
+    "performance-relevant libraries in a Python environment (protobuf backend, laspy LAZ decoder, OpenMP runtimes, " +
+    "thread settings); pass python=<project interpreter>. action=bench: run a shell command repeatedly, report median " +
+    "and spread, save it as .clean-arch/perf/bench-<name>.json, and compare with a saved baseline via compare=<name>; " +
+    "the command may print lines 'PERF_METRIC name=value' for in-process timings. action=lessons: search the persistent " +
+    "store of measured optimization lessons with query, or add one verified lesson with entry.",
+  params: {
+    action: { type: "string", enum: ["scan", "env", "bench", "lessons"], optional: true, description: "default scan" },
+    include: { type: "string[]", optional: true, description: "action=scan: only scan these paths (relative to the project)" },
+    include_tests: { type: "boolean", optional: true, description: "action=scan: also scan test files" },
+    limit: { type: "number", optional: true, description: "action=scan: locations shown per rule (default 8); action=lessons: max entries (default 8)" },
+    python: { type: "string", optional: true, description: "action=env: interpreter of the project environment, e.g. .venv/bin/python (default: the plugin's Python)" },
+    name: { type: "string", optional: true, description: "action=bench: name of this benchmark (letters, digits, . _ -)" },
+    command: { type: "string", optional: true, description: "action=bench: shell command to time, run from the project root or cwd" },
+    runs: { type: "number", optional: true, description: "action=bench: measured runs (default 7, minimum 3)" },
+    warmup: { type: "number", optional: true, description: "action=bench: discarded warm-up runs (default 1)" },
+    cwd: { type: "string", optional: true, description: "action=bench: working directory relative to the project" },
+    compare: { type: "string", optional: true, description: "action=bench: name of a saved benchmark to compare with" },
+    threshold: { type: "number", optional: true, description: "action=bench: smallest relative change that counts, default 0.05" },
+    query: { type: "string", optional: true, description: "action=lessons: words to search for, e.g. 'shapely contains point'; omit to list the index" },
+    entry: { type: "string", optional: true, description: "action=lessons: one Markdown entry to add ('## title' then '- key: value' lines); only for verified, measured results" },
+  },
+  async execute(args, env) {
+    const action = args.action ?? "scan"
+    const argv: string[] = [action]
+    let timeoutMs = 10 * 60_000
+    if (action === "scan") {
+      argv.push(...repeat("--include", args.include))
+      if (args.include_tests) argv.push("--include-tests")
+      if (args.limit) argv.push("--limit", String(args.limit))
+    } else if (action === "env") {
+      if (args.python) argv.push("--python", path.resolve(env.directory, args.python))
+    } else if (action === "bench") {
+      if (!args.name || !args.command) throw new Error("action=bench needs name and command")
+      argv.push(args.name, "--cmd", args.command)
+      if (args.runs) argv.push("--runs", String(args.runs))
+      if (args.warmup !== undefined) argv.push("--warmup", String(args.warmup))
+      if (args.cwd) argv.push("--cwd", args.cwd)
+      if (args.compare) argv.push("--compare", args.compare)
+      if (args.threshold) argv.push("--threshold", String(args.threshold))
+      timeoutMs = 2 * 60 * 60_000
+    } else if (action === "lessons") {
+      if (args.query) argv.push("--query", args.query)
+      if (args.entry) argv.push("--entry", args.entry)
+      if (args.limit) argv.push("--limit", String(args.limit))
+    }
+    env.progress(`clean_arch_perf ${action}`)
+    const result = await runScript("perf_check.py", env.directory, argv, env.signal, timeoutMs)
+    if (result.code !== 0) throw new Error((result.stderr || result.stdout).trim())
+    return result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : "")
+  },
+}
+
 const reviewSessions = new Map<string, ReviewSession>()
 
 const review: ToolSpec = {
@@ -194,7 +252,7 @@ async function startReviewSession(key: string, env: ToolEnv, args: Record<string
   return session
 }
 
-export const TOOLS: ToolSpec[] = [facts, leftovers, render, review]
+export const TOOLS: ToolSpec[] = [facts, leftovers, render, review, perf]
 
 export function toJsonSchema(params: Record<string, ParamSpec>) {
   const properties: Record<string, unknown> = {}

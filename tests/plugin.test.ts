@@ -77,7 +77,7 @@ describe("opencode 2.x setup()", () => {
     expect(added.skill).toHaveLength(9)
     expect(added.skill[0].path.startsWith(SKILLS_DIR)).toBe(true)
     expect(added.command.map((c) => c.name)).toEqual(["clean-arch", "arch-diagnose", "arch-map", "clean-finish", "arch-review"])
-    expect(added.tool.map((t) => t.name)).toEqual(["clean_arch_facts", "clean_arch_leftovers", "clean_arch_render", "clean_arch_review"])
+    expect(added.tool.map((t) => t.name)).toEqual(["clean_arch_facts", "clean_arch_leftovers", "clean_arch_render", "clean_arch_review", "clean_arch_perf"])
     const review = added.tool.find((t) => t.name === "clean_arch_review")
     expect(review.input.required).toEqual(["path"])
     expect(review.input.additionalProperties).toBe(false)
@@ -104,6 +104,38 @@ describe("opencode 2.x setup()", () => {
     expect(json.content).toContain(".clean-arch/cache/facts.json")
     expect(JSON.parse(readFileSync(path.join(dir, ".clean-arch/cache/facts.json"), "utf8")).package_cycles).toHaveLength(1)
   })
+
+  test("clean_arch_perf scans, rejects bad input and keeps lessons in the configured store", async () => {
+    const dir = fixtureCopy()
+    writeFileSync(path.join(dir, "slow.py"), "import numpy as np\n\n\ndef f(idx, vals, acc):\n    np.add.at(acc, idx, vals)\n")
+    const store = path.join(mkdtempSync(path.join(os.tmpdir(), "lessons-")), "lessons.md")
+    const saved = process.env.CLEAN_ARCH_LESSONS
+    process.env.CLEAN_ARCH_LESSONS = store
+    try {
+      const { added } = await setup(dir)
+      const perf = added.tool.find((t) => t.name === "clean_arch_perf")
+      const scan = await perf.execute({}, {})
+      expect(scan.content).toContain("PERF-NP-ADD-AT")
+      await expect(perf.execute({ action: "bench", name: "x" }, {})).rejects.toThrow("needs name and command")
+      const entry = [
+        "## numpy: bincount replaces add.at",
+        "- status: verified",
+        "- topics: numpy, scatter-add",
+        "- symptom: np.add.at over 5M indices",
+        "- change: np.bincount(idx, weights=vals, minlength=n)",
+        "- result: 3.1 s -> 0.05 s, 5M indices",
+        "- environment: python 3.11, numpy 1.26",
+      ].join("\n")
+      const added1 = await perf.execute({ action: "lessons", entry }, {})
+      expect(added1.content).toContain("Added lesson")
+      const found = await perf.execute({ action: "lessons", query: "numpy scatter" }, {})
+      expect(found.content).toContain("bincount")
+      expect(readFileSync(store, "utf8")).toContain("- date:")
+    } finally {
+      if (saved === undefined) delete process.env.CLEAN_ARCH_LESSONS
+      else process.env.CLEAN_ARCH_LESSONS = saved
+    }
+  })
 })
 
 describe("opencode 1.x server()", () => {
@@ -120,7 +152,11 @@ describe("opencode 1.x server()", () => {
   test("tools validate with zod and execute against the session directory", async () => {
     const { tool } = await import("@opencode-ai/plugin")
     const hooks = await plugin.server({ directory: "/nowhere" })
-    expect(Object.keys(hooks.tool)).toHaveLength(4)
+    expect(Object.keys(hooks.tool)).toHaveLength(5)
+    const perfSchema = tool.schema.object(hooks.tool.clean_arch_perf.args)
+    expect(perfSchema.safeParse({}).success).toBe(true)
+    expect(perfSchema.safeParse({ action: "bench", name: "a", command: "x", runs: 5 }).success).toBe(true)
+    expect(perfSchema.safeParse({ action: "profile" }).success).toBe(false)
     const leftovers = hooks.tool.clean_arch_leftovers
     const schema = tool.schema.object(leftovers.args)
     expect(schema.safeParse({ since: "HEAD", skip: ["todo"] }).success).toBe(true)
