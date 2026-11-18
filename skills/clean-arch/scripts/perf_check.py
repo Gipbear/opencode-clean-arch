@@ -38,7 +38,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pyindex import list_files  # noqa: E402
+from pyindex import ensure_utf8_stdio, list_files  # noqa: E402
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 REFS = "skills/perf-tune/references/libraries.md"
@@ -744,6 +744,7 @@ def cmd_lessons(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- main
 
 def main(argv: list[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", default=".")
     sub = parser.add_subparsers(dest="command", required=True)

@@ -5,22 +5,25 @@
 # Fail on any package-level import cycle.
 no_cycles = true
 
-# Layers from top to bottom. A module may import from its own layer or any layer below it.
+# Flat layers from top to bottom (3 layers recommended).
+# A module may import from its own layer or any layer below it, never above it.
 [[layers]]
-name = "entry"
-modules = ["scripts.*", "pkg.cli.*"]
+name = "entry_and_spine"
+modules = ["scripts.*", "pkg.cli.*", "pkg.api.*", "pkg.pipeline*"]
 
 [[layers]]
-name = "application"
-modules = ["pkg.agent.*", "pkg.serving.*"]
-
-[[layers]]
-name = "core"
-modules = ["pkg.core.*"]
+name = "domain"
+modules = ["pkg.core.*", "pkg.domain.*", "pkg.models*"]
 
 [[layers]]
 name = "infrastructure"
-modules = ["pkg.io.*", "pkg.llm.*"]
+modules = ["pkg.infra.*", "pkg.io.*", "pkg.clients.*", "pkg.config*"]
+
+# Forbidden imports (supports both internal modules and external packages like requests*, fastapi*).
+[[forbid]]
+from = "pkg.core.*"
+to = "requests*"
+reason = "domain logic must stay pure; keep HTTP calls in infrastructure"
 
 [[forbid]]
 from = "pkg.core.*"

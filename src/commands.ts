@@ -8,16 +8,19 @@ export interface CommandSpec {
 export const COMMANDS: CommandSpec[] = [
   {
     name: "clean-arch",
-    description: "诊断 → 方案评审 → 重构 → 收尾检查 → 架构文档（完整流程）",
+    description: "诊断脉络 → 两轮评审重构（清扫噪音 + 重塑主干与数据契约） → 收尾门禁 → 架构文档",
     template:
-      "Load the `clean-arch` skill and run its workflow. Scope: $ARGUMENTS (the whole repository if empty). " +
-      "Diagnosis and planning are read-only; do not change source code before the plan is approved in clean_arch_review.",
+      "Load the `clean-arch` skill and run its workflow (Round 1: Target Architecture Blueprint + hygiene sweep; " +
+      "Round 2: explicit workflow spine, dataclass contracts & flat 3-layer module boundaries). Scope: $ARGUMENTS " +
+      "(the whole repository if empty). Diagnosis and planning are read-only; do not change source code before each " +
+      "round's plan is approved in clean_arch_review.",
   },
   {
     name: "arch-diagnose",
-    description: "只读诊断代码结构问题（重复、循环依赖、遗留版本、上帝类……）",
+    description: "只读架构诊断：主干脉络、隐式字典契约、I/O 边界、散落职责与遗留清理",
     template:
       "Load the `arch-diagnose` skill and diagnose: $ARGUMENTS (the whole repository if empty). " +
+      "Diagnose workflow spine, data contracts, I/O boundaries and module cohesion first, separated from hygiene leftovers. " +
       "Read-only: write only .clean-arch/diagnosis.md and show me a short summary.",
   },
   {

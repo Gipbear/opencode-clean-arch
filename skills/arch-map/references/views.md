@@ -7,7 +7,7 @@ pages; link instead.
 | Page | Answers | Main diagram | Must not contain |
 |---|---|---|---|
 | `README.md` (overview) | What is this, who uses it, what does it talk to, where do I start? | context flowchart: the system as one box, users and external systems around it | internal classes |
-| `logical.md` | What are the core concepts and how do they relate? | `classDiagram` of ≤ 15 core classes (domain objects, main services), with key attributes and methods only; with two or more independent subsystems, one diagram per subsystem of ≤ 12 classes each | helpers, private methods, every class in the repo |
+| `logical.md` | What are the core domain data contracts (`@dataclass` / models) and key capability classes, and how do they relate? | `classDiagram` of ≤ 15 core data models and services/collaborators, showing key fields and public entry methods; with 2+ independent subsystems, one diagram per subsystem (≤ 12 nodes) | private helpers, internal implementation trivia, every class in the repo |
 | `development.md` | How is the code organised; what may depend on what; where do I add things? | package/module dependency `flowchart` grouped in `subgraph` layers | runtime details |
 | `process.md` | What runs at runtime: processes, services, workers, batch jobs, resident model servers; how do they communicate; what is concurrent; which ports are shared? | `flowchart` of processes and channels (HTTP, queue, files, GPU, subprocess), or `stateDiagram-v2` for a lifecycle | class internals |
 | `physical.md` | Where does it run: machines, GPUs, containers, ports, storage, external services, config/secrets? | deployment `flowchart` with nodes as hosts or containers | code structure |

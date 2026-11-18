@@ -40,13 +40,16 @@ function repeat(flag: string, values: unknown): string[] {
 const facts: ToolSpec = {
   name: "clean_arch_facts",
   description:
-    "Deterministic architecture facts for a Python (+ small frontend) repository, parsed without importing it: " +
-    "modules, package dependencies, import cycles, unresolved internal imports, duplicate code, hotspots, core classes, " +
-    "entry points. command=summary (default) for a Markdown overview (brief=true for a metrics table); mermaid for draft " +
+    "Deterministic architecture facts and design-smell signals for a Python (+ small frontend) repository, parsed " +
+    "without importing it: entry points, package/module dependencies & cycles, explicit data_models, " +
+    "architecture_signals (tangled orchestrators mixing cross-module flow with I/O, repeated dict key sets across " +
+    "modules, weak dict/Any boundaries, impure shared/core modules, scattered external I/O, mutable globals, " +
+    "utils/helpers grab-bags, single-implementation ABCs and one-method classes), duplicates, hotspots, and core " +
+    "classes. command=summary (default) for a Markdown overview (brief=true for a metrics table); mermaid for draft " +
     "diagrams (view packages|classes, focus a dotted prefix); importers to list everything that references target " +
     "(imports including tests, plus mentions in scripts, configs, docs, Dockerfiles); check to verify " +
-    ".clean-arch/rules.toml; verify to check Mermaid diagrams (.mmd files, or mermaid blocks in .md) against the code; " +
-    "json writes full facts to .clean-arch/cache/facts.json.",
+    ".clean-arch/rules.toml (layers, internal/external forbidden imports, cycles, budgets); verify to check Mermaid " +
+    "diagrams (.mmd files, or mermaid blocks in .md) against the code; json writes full facts to .clean-arch/cache/facts.json.",
   params: {
     command: { type: "string", enum: ["summary", "mermaid", "importers", "check", "verify", "json"], optional: true, description: "default summary" },
     target: { type: "string", optional: true, description: "command=importers: module, package or path (pkg.serving, legacy_agent/); command=verify: diagram file or directory (default docs/architecture/diagrams)" },

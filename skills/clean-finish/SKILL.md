@@ -1,58 +1,81 @@
 ---
 name: clean-finish
-description: Completion gate for refactors and agent-written changes - verifies no parallel versions, compatibility shims, broken imports, commented-out code, debug output, version-named identifiers or narrative comments remain, the deletion list is done and tests pass. Use before declaring any refactor or feature done, or when the user asks to check for leftovers.
+description: Completion gate for architectural refactors and agent-written changes - verifies zero leftovers, deletion list completion, flat 3-layer rules check, target spine/dataclass blueprint alignment, zero new bloat, and passing tests. Use at the end of clean-arch or on /clean-finish.
 ---
 
 # Clean finish gate
 
-A change is done only when this gate passes. Run it on the diff since the base commit
-recorded in `.clean-arch/baseline.md`, or since the merge base with the main branch when there
-is no baseline.
+A refactor or feature is done only when **both** code hygiene and architectural integrity pass.
+Run this gate against the base commit recorded in `.clean-arch/baseline.md` (or the merge base
+with the main branch when running standalone).
+
+*Note on two-round `clean-arch` runs:* After Round 1 (hygiene sweep), run checks 1, 2 and 4 as a
+fast checkpoint before planning Round 2. After Round 2 (or a single-round run), run **all** seven
+checks below.
 
 ## Checks
 
-Run all of them. Fix what fails, then re-run the whole gate.
+Run every check, fix what fails, and re-run until clean.
 
-1. **Leftover scan.** `clean_arch_leftovers` with `since: <base>`, or
-   `python3 ../clean-arch/scripts/leftover_scan.py --since <base> --fail-on high`.
-   - `high` findings (parallel-version, duplicate, broken-import, compat-shim): must be zero.
-     An exception is allowed only for a compat shim protecting an external contract named in
-     the approved plan. Cite the plan line in the report.
-   - `medium` (commented-code, debug, version-name): fix every one, or justify each in the
-     report (for example, `print` in a CLI is output, not debug).
-   - `low` (narrative-comment, unreferenced): review every one. Delete unreferenced code
-     unless it is an entry point, a plugin hook or used by string lookup.
-2. **Deletion list.** For every item in the plan's deletion list, confirm the file or symbol is
-   gone, `clean_arch_facts` `importers` on the old module path is empty, and `rg -n "<old name>"`
-   finds no references outside changelogs and `.clean-arch/`.
-3. **Structure.** `clean_arch_facts`:
-   - no unresolved internal imports;
-   - no cycle that did not exist in the baseline;
-   - if `.clean-arch/rules.toml` exists, `check` passes, or every violation is pre-existing
-     and listed.
-4. **Behaviour.** Run the full test command from the baseline. Nothing that passed before may
-   fail now. Run the plan's smoke checks.
-5. **Diff hygiene.** Read `git diff --stat <base>` and skim the full diff:
-   - no stray files (`*.bak`, `*.orig`, scratch scripts, notebooks with outputs, `.env`);
-   - no unrelated reformatting;
-   - no new dependencies the plan did not mention;
-   - generated docs and diagrams are up to date with the code.
-6. **Comments.** Apply `comment-hygiene` to the changed files.
+1. **Leftover scan.** Run `clean_arch_leftovers` with `since: <base>` (or
+   `python3 ../clean-arch/scripts/leftover_scan.py --since <base> --fail-on high`):
+   - `high` (`parallel-version`, `duplicate`, `broken-import`, `compat-shim`): **must be zero**.
+     The only valid exception is a shim protecting an external contract explicitly listed in the
+     approved plan (cite the plan line).
+   - `medium` (`commented-code`, `debug`, `version-name`): fix all, or justify genuine CLI
+     output.
+   - `low` (`narrative-comment`, `unreferenced`): clean up narrative comments; delete newly
+     unreferenced symbols unless they are entry points, framework hooks or string-loaded targets.
+
+2. **Deletion list audit.** For every file, module, class or alias in the plan's deletion list
+   (across both Round 1 and Round 2):
+   - confirm the file/symbol is gone;
+   - `clean_arch_facts` `importers` on removed module paths is empty;
+   - `rg -n "<old_name>"` finds zero hits outside changelogs and `.clean-arch/`.
+
+3. **Layer & dependency rules (`clean_arch_facts`).**
+   - Zero unresolved internal imports;
+   - Zero package or module import cycles that were not explicitly exempted;
+   - Run `clean_arch_facts` `check` against `.clean-arch/rules.toml`: all layer rules,
+     `no_cycles`, and `[[forbid]]` rules (including forbidden framework/network imports inside
+     domain/core modules) pass, with no unlayered core/service modules hiding outside `layers`
+     unless listed in `exempt`.
+
+4. **Blueprint & anti-bloat audit.** Compare the resulting code against the approved Target
+   Architecture Blueprint in `.clean-arch/plan.md` and `clean_arch_facts` `summary`:
+   - **Spine**: each planned workflow entry point / orchestrator reads as a concise step-by-step
+     storyline (~30–50 lines) rather than a 200-line tangled function;
+   - **Data contracts**: planned `@dataclass` models exist and cross-module raw `dict` bags named
+     in the plan are gone;
+   - **Zero new bloat**: `Speculative abstractions & one-method classes` and `Grab-bag modules`
+     in `clean_arch_facts` show **no** newly introduced single-implementation `ABC` / `Protocol`
+     / `Factory`, pass-through wrapper module, or new `utils.py` / `helpers.py` file.
+
+5. **Behaviour.** Run the full test command and smoke checks from `.clean-arch/baseline.md`.
+   Nothing that passed in the baseline may regress.
+
+6. **Diff hygiene.** Inspect `git diff --stat <base>` and skim the diff:
+   - no stray scratch files (`*.bak`, `*.orig`, temp scripts, `.env`, unstripped notebook outputs);
+   - no unrelated formatting churn;
+   - no unapproved third-party dependencies.
+
+7. **Comment hygiene.** Apply `comment-hygiene` to all modified and newly created files (accurate
+   1–3 line module responsibility docstrings; zero edit-narration comments).
 
 ## Report
 
-Write `.clean-arch/finish-report.md` and show the table to the user:
+Write `.clean-arch/finish-report.md` and present the concise summary table:
 
 ```markdown
 | Check | Result | Notes |
 |---|---|---|
-| Leftovers high / medium / low | 0 / 0 / 3 reviewed | … |
-| Deletion list | 12/12 removed | |
-| Unresolved imports / new cycles | 0 / 0 | |
-| Rules check | pass | |
-| Tests | 214 passed (baseline 214) | |
-| Diff hygiene | clean | |
+| Leftovers (high / medium / low) | 0 / 0 / 2 reviewed | … |
+| Deletion list | 14/14 removed | 0 residual `rg` hits |
+| Layer & forbidden-import rules (`check`) | pass | 3 layers, 0 cycles |
+| Blueprint & anti-bloat audit | pass | spine + 4 `@dataclass` models in place; 0 single-impl ABCs |
+| Tests & smoke checks | 214 passed (baseline 214) | |
+| Diff & comment hygiene | clean | |
 ```
 
-If something cannot reach zero, say so plainly with the reason. Never mark the gate as passed
-while a `high` finding remains without a plan-backed exception.
+Never mark the gate passed while an unapproved `high` leftover, broken import, or new layer/cycle
+violation remains.

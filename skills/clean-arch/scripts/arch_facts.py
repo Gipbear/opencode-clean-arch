@@ -26,7 +26,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pyindex import Module, RepoIndex, build_index  # noqa: E402
+from pyindex import FunctionInfo, Module, RepoIndex, build_index, ensure_utf8_stdio  # noqa: E402
 
 LONG_FUNCTION = 60
 DEEP_NESTING = 4
@@ -34,6 +34,33 @@ MANY_PARAMS = 6
 BIG_MODULE = 500
 BIG_CLASS = 300
 MIN_DUP_STATEMENTS = 6
+
+NETWORK_DB_PKGS = frozenset({
+    "requests", "httpx", "aiohttp", "grpc", "websockets", "openai", "anthropic",
+    "boto3", "botocore", "redis", "pymongo", "sqlalchemy", "psycopg", "psycopg2",
+    "asyncpg", "sqlite3", "pymysql", "elasticsearch", "qdrant_client", "chromadb", "pymilvus",
+})
+FRAMEWORK_PKGS = frozenset({
+    "fastapi", "flask", "django", "starlette", "tornado", "sanic",
+    "gradio", "streamlit", "argparse", "click", "typer", "fire",
+})
+FS_CALLS = frozenset({
+    "open", "os.makedirs", "os.mkdir", "os.remove", "os.unlink", "os.listdir", "os.walk", "os.scandir",
+    "shutil.copy", "shutil.copy2", "shutil.copytree", "shutil.rmtree", "shutil.move",
+    "json.load", "json.dump", "pickle.load", "pickle.dump", "yaml.load", "yaml.safe_load", "yaml.dump",
+    "torch.load", "torch.save", "np.load", "np.save", "numpy.load", "numpy.save",
+})
+FS_ATTRS = frozenset({
+    "read_text", "write_text", "read_bytes", "write_bytes", "mkdir", "unlink",
+    "read_csv", "to_csv", "read_parquet", "to_parquet", "read_excel",
+})
+GRAB_BAG_STEMS = frozenset({"utils", "util", "common", "helpers", "helper", "misc", "shared", "tools", "general"})
+EDGE_OR_INFRA_PARTS = frozenset({
+    "io", "infra", "infrastructure", "client", "clients", "storage", "db", "database", "http",
+    "config", "settings", "cli", "api", "web", "server", "serving", "scripts", "bin", "jobs",
+})
+CORE_PARTS = frozenset({"core", "domain", "model", "models", "entities", "schema", "schemas"})
+MUTATING_CONTAINER_METHODS = frozenset({"append", "extend", "update", "pop", "clear", "add", "discard", "setdefault"})
 
 
 def import_edges(index: RepoIndex, include_tests: bool) -> tuple[dict[tuple[str, str], int], list[dict]]:
@@ -373,6 +400,338 @@ def entry_points(index: RepoIndex) -> list[str]:
     return sorted(m.path for m in index.modules.values() if m.has_main_guard and not m.is_test)
 
 
+def data_models(index: RepoIndex, include_tests: bool) -> list[dict]:
+    """Explicit data contracts (@dataclass, NamedTuple, TypedDict, BaseModel, Enum)."""
+    usage = class_usage(index)
+    rows = []
+    for mod in index.modules.values():
+        if mod.is_test and not include_tests:
+            continue
+        for cls in mod.classes:
+            if cls.name.startswith("_"):
+                continue
+            is_data = any(d in DATA_DECORATORS for d in cls.decorators) or \
+                any(b.split(".")[-1] in DATA_BASES for b in cls.bases)
+            if is_data:
+                fields = [k for k in cls.attributes if not k.startswith("_")]
+                rows.append({
+                    "module": mod.name, "path": mod.path, "name": cls.name, "line": cls.line,
+                    "fields": fields, "used_by_modules": usage.get((mod.name, cls.name), 0),
+                })
+    return sorted(rows, key=lambda r: (-r["used_by_modules"], r["path"], r["line"]))
+
+
+def _module_alias_map(mod: Module) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for ref in mod.imports:
+        if ref.level:
+            continue
+        if ref.is_from and ref.target:
+            for local, orig in ref.alias_map.items():
+                aliases[local] = f"{ref.target}.{orig}" if orig != "*" else ref.target
+        else:
+            for local, orig in ref.alias_map.items():
+                aliases[local] = orig
+    return aliases
+
+
+def _call_io_kind(node: ast.Call, aliases: dict[str, str]) -> str | None:
+    raw = dotted_text(node.func)
+    if raw:
+        parts = raw.split(".")
+        resolved = f"{aliases[parts[0]]}.{'.'.join(parts[1:])}" if parts[0] in aliases and len(parts) > 1 \
+            else aliases.get(raw, raw)
+        if resolved in FS_CALLS or raw in FS_CALLS:
+            return "filesystem"
+        if resolved in ("os.getenv", "os.environ.get", "os.environ.pop", "os.environ.setdefault"):
+            return "env"
+        if resolved.startswith("subprocess.") or resolved in ("os.system", "os.popen"):
+            return "subprocess"
+        top = resolved.split(".")[0]
+        if top in NETWORK_DB_PKGS or resolved.startswith("urllib.request."):
+            return "network_db"
+    if isinstance(node.func, ast.Attribute) and node.func.attr in FS_ATTRS:
+        return "filesystem"
+    return None
+
+
+def _valid_dict_keys(raw_keys: list[str]) -> frozenset[str] | None:
+    keys = frozenset(k for k in raw_keys if re.fullmatch(r"[A-Za-z_][\w.-]*", k))
+    return keys if 3 <= len(keys) <= 15 and len(keys) == len(set(raw_keys)) else None
+
+
+def _dict_literal_keys(node: ast.Dict) -> frozenset[str] | None:
+    if not node.keys or any(k is None or not (isinstance(k, ast.Constant) and isinstance(k.value, str)) for k in node.keys):
+        return None
+    return _valid_dict_keys([k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)])
+
+
+def architecture_signals(index: RepoIndex, edges: dict[tuple[str, str], int],
+                         classes: list[dict], models: list[dict]) -> dict:
+    """Signals that reveal missing spine, implicit dict contracts, leaked I/O and speculative bloat."""
+    mod_fan_in: Counter = Counter()
+    for a, b in edges:
+        if a in index.modules and b in index.modules and not index.modules[a].is_test:
+            mod_fan_in[b] += 1
+
+    impure_shared: list[dict] = []
+    io_by_kind: dict[str, set[str]] = defaultdict(set)
+    global_effects: list[dict] = []
+    tangled: list[dict] = []
+    dict_occurrences: dict[frozenset[str], list[tuple[str, int]]] = defaultdict(list)
+    dict_boundaries: list[dict] = []
+    grab_bags: list[dict] = []
+    one_method: list[dict] = []
+
+    typed_dict_names = {
+        cls.name for m in index.modules.values() for cls in m.classes
+        if any(b.split(".")[-1] == "TypedDict" for b in cls.bases)
+    }
+
+    for mod in sorted(index.modules.values(), key=lambda m: m.path):
+        if mod.is_test or mod.tree is None:
+            continue
+        aliases = _module_alias_map(mod)
+        mod_io: dict[str, str] = {}
+
+        # Imports contributing to external I/O or frameworks
+        internal_symbol_owners: dict[str, str] = {}
+        internal_mod_aliases: dict[str, str] = {}
+        for ref in mod.imports:
+            if ref.guarded == "TYPE_CHECKING":
+                continue
+            resolved = index.resolve(mod, ref)
+            if any(t for t, _ in resolved):
+                if ref.is_from:
+                    for imported, (target, name) in zip(ref.names, resolved):
+                        if target and target != mod.name:
+                            local = next((a for a, n in ref.alias_map.items() if n == imported), imported)
+                            if name is None:
+                                internal_mod_aliases[local] = target
+                            else:
+                                internal_symbol_owners[local] = target
+                else:
+                    for (local, _), (target, _) in zip(ref.alias_map.items(), resolved):
+                        if target and target != mod.name:
+                            internal_mod_aliases[local] = target
+                continue
+            top = ref.target.split(".")[0] if ref.target else ""
+            if top in NETWORK_DB_PKGS or ref.target.startswith("urllib.request"):
+                mod_io.setdefault("network_db", f"{mod.path}:{ref.line} imports `{ref.target}`")
+            elif top in FRAMEWORK_PKGS:
+                mod_io.setdefault("framework", f"{mod.path}:{ref.line} imports `{ref.target}`")
+            elif top == "subprocess":
+                mod_io.setdefault("subprocess", f"{mod.path}:{ref.line} imports `subprocess`")
+            elif top == "dotenv":
+                mod_io.setdefault("env", f"{mod.path}:{ref.line} imports `dotenv`")
+
+        # Whole-module AST walk for I/O calls, os.environ, and dict literals
+        for node in ast.walk(mod.tree):
+            if isinstance(node, ast.Call):
+                kind = _call_io_kind(node, aliases)
+                if kind:
+                    mod_io.setdefault(kind, f"{mod.path}:{node.lineno}")
+            elif isinstance(node, ast.Attribute):
+                dt = dotted_text(node)
+                if dt in ("os.environ", "environ") and (dt == "os.environ" or aliases.get("environ") == "os.environ"):
+                    mod_io.setdefault("env", f"{mod.path}:{node.lineno} `os.environ`")
+            elif isinstance(node, ast.Dict):
+                keys = _dict_literal_keys(node)
+                if keys:
+                    dict_occurrences[keys].append((mod.path, node.lineno))
+
+        if not mod.is_package_init:
+            for k in ("network_db", "filesystem", "env", "subprocess"):
+                if k in mod_io:
+                    io_by_kind[k].add(mod.path)
+
+        parts_lower = {p.lower() for p in Path(mod.path).with_suffix("").parts}
+        in_edge_or_infra = bool(parts_lower & EDGE_OR_INFRA_PARTS)
+        in_core = bool(parts_lower & CORE_PARTS)
+        heavy_io = set(mod_io) & {"network_db", "filesystem", "subprocess", "framework"}
+        if not mod.is_package_init and not in_edge_or_infra:
+            if (mod_fan_in[mod.name] >= 2 and heavy_io) or (in_core and mod_io):
+                first_ex = next(iter(mod_io.values()))
+                impure_shared.append({
+                    "module": mod.name, "path": mod.path, "fan_in": mod_fan_in[mod.name],
+                    "io_kinds": sorted(mod_io), "example": first_ex,
+                })
+
+        # Top-level mutable containers and import-time side effects
+        mutable_containers: dict[str, int] = {}
+        for stmt in mod.tree.body:
+            if isinstance(stmt, ast.If) and "__name__" in ast.unparse(stmt.test) and "__main__" in ast.unparse(stmt.test):
+                continue
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                val = stmt.value
+                targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+                is_container = isinstance(val, (ast.Dict, ast.List, ast.Set)) or (
+                    isinstance(val, ast.Call) and (dotted_text(val.func) or "").split(".")[-1]
+                    in ("dict", "list", "set", "defaultdict", "Counter", "deque")
+                )
+                if is_container:
+                    for tgt in targets:
+                        if isinstance(tgt, ast.Name) and tgt.id != "__all__":
+                            mutable_containers[tgt.id] = stmt.lineno
+            for sub in ast.walk(stmt):
+                if isinstance(sub, ast.Call):
+                    dt = dotted_text(sub.func) or ""
+                    if dt in ("sys.path.insert", "sys.path.append"):
+                        global_effects.append({"path": mod.path, "line": sub.lineno,
+                                               "kind": "sys-path-hack", "detail": f"`{dt}(...)` at import time"})
+                    elif _call_io_kind(sub, aliases) in ("filesystem", "network_db", "subprocess"):
+                        global_effects.append({"path": mod.path, "line": sub.lineno,
+                                               "kind": "import-io", "detail": "I/O executed at import time"})
+
+        mutated_globals: set[str] = set()
+        fn_nodes: list[tuple[FunctionInfo, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+        top_fn_map = {(f.name, f.line): f for f in mod.functions}
+        cls_fn_map = {(c.name, m.name, m.line): m for c in mod.classes for m in c.methods}
+        for stmt in mod.tree.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and (stmt.name, stmt.lineno) in top_fn_map:
+                fn_nodes.append((top_fn_map[(stmt.name, stmt.lineno)], stmt))
+            elif isinstance(stmt, ast.ClassDef):
+                for mstmt in stmt.body:
+                    if isinstance(mstmt, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                            and (stmt.name, mstmt.name, mstmt.lineno) in cls_fn_map:
+                        fn_nodes.append((cls_fn_map[(stmt.name, mstmt.name, mstmt.lineno)], mstmt))
+
+        for finfo, fnode in fn_nodes:
+            called_mods: set[str] = set()
+            fn_io: set[str] = set()
+            var_keys: dict[str, set[str]] = defaultdict(set)
+            returned_dict_len = 0
+
+            for sub in ast.walk(fnode):
+                if isinstance(sub, ast.Global):
+                    for gname in sub.names:
+                        mutated_globals.add(gname)
+                        global_effects.append({"path": mod.path, "line": sub.lineno,
+                                               "kind": "global-mutation", "detail": f"`global {gname}` in `{finfo.qualname}`"})
+                elif isinstance(sub, ast.Subscript):
+                    if isinstance(sub.value, ast.Name) and isinstance(sub.ctx, (ast.Store, ast.Del)) \
+                            and sub.value.id in mutable_containers:
+                        mutated_globals.add(sub.value.id)
+                    elif isinstance(sub.value, ast.Name) and isinstance(sub.ctx, ast.Load) \
+                            and isinstance(sub.slice, ast.Constant) and isinstance(sub.slice.value, str):
+                        var_keys[sub.value.id].add(sub.slice.value)
+                elif isinstance(sub, ast.Call):
+                    if isinstance(sub.func, ast.Attribute) and isinstance(sub.func.value, ast.Name):
+                        vname, attr = sub.func.value.id, sub.func.attr
+                        if vname in mutable_containers and attr in MUTATING_CONTAINER_METHODS:
+                            mutated_globals.add(vname)
+                        if attr == "get" and sub.args and isinstance(sub.args[0], ast.Constant) \
+                                and isinstance(sub.args[0].value, str):
+                            var_keys[vname].add(sub.args[0].value)
+                        if vname in internal_mod_aliases:
+                            called_mods.add(internal_mod_aliases[vname])
+                    elif isinstance(sub.func, ast.Name) and sub.func.id in internal_symbol_owners:
+                        called_mods.add(internal_symbol_owners[sub.func.id])
+                    kind = _call_io_kind(sub, aliases)
+                    if kind in ("filesystem", "network_db", "subprocess"):
+                        fn_io.add(kind)
+                elif isinstance(sub, ast.Name) and sub.id in internal_symbol_owners:
+                    called_mods.add(internal_symbol_owners[sub.id])
+                elif isinstance(sub, ast.Return) and isinstance(sub.value, ast.Dict):
+                    rkeys = _dict_literal_keys(sub.value)
+                    if rkeys:
+                        returned_dict_len = max(returned_dict_len, len(rkeys))
+
+            for raw_set in var_keys.values():
+                vkeys = _valid_dict_keys(list(raw_set))
+                if vkeys:
+                    dict_occurrences[vkeys].append((mod.path, finfo.line))
+
+            if finfo.length >= 40 and len(called_mods) >= 2 and (fn_io or finfo.nesting >= 3):
+                tangled.append({
+                    "path": mod.path, "function": finfo.qualname, "line": finfo.line,
+                    "lines": finfo.length, "internal_deps": len(called_mods),
+                    "direct_io": sorted(fn_io), "nesting": finfo.nesting,
+                })
+
+            if not finfo.name.startswith("_") and finfo.name not in ("to_dict", "as_dict", "from_dict", "model_dump"):
+                ret_ann = ast.unparse(fnode.returns) if fnode.returns is not None else ""
+                arg_anns = [ast.unparse(a.annotation) for a in
+                            (fnode.args.posonlyargs + fnode.args.args + fnode.args.kwonlyargs)
+                            if a.annotation is not None]
+                weak_params = sum(1 for a in arg_anns if re.search(r"\b(dict|Dict|Mapping|Any)\b", a)
+                                  and not any(td in a for td in typed_dict_names))
+                if returned_dict_len >= 3 and not any(td in ret_ann for td in typed_dict_names):
+                    dict_boundaries.append({
+                        "path": mod.path, "function": finfo.qualname, "line": finfo.line,
+                        "reason": f"returns {returned_dict_len}-key dict literal instead of a data model",
+                    })
+                elif weak_params >= 2:
+                    dict_boundaries.append({
+                        "path": mod.path, "function": finfo.qualname, "line": finfo.line,
+                        "reason": f"{weak_params} dict/Any parameters at module boundary",
+                    })
+
+        for gname in sorted(mutated_globals):
+            if gname in mutable_containers:
+                global_effects.append({
+                    "path": mod.path, "line": mutable_containers[gname],
+                    "kind": "mutable-global", "detail": f"module-level container `{gname}` mutated at runtime",
+                })
+
+        stem = Path(mod.path).stem.lower()
+        defs = len(mod.functions) + len(mod.classes)
+        if stem in GRAB_BAG_STEMS and defs >= 3:
+            grab_bags.append({
+                "module": mod.name, "path": mod.path, "definitions": defs, "fan_in": mod_fan_in[mod.name],
+            })
+
+        for cls in mod.classes:
+            if cls.name.startswith("_") or cls.abstract or cls.bases:
+                continue
+            if any(d in DATA_DECORATORS for d in cls.decorators):
+                continue
+            pub = [m.name for m in cls.methods if not m.name.startswith("_")]
+            all_m = [m.name for m in cls.methods]
+            if len(pub) == 1 and set(all_m) <= {"__init__", pub[0]}:
+                one_method.append({"path": mod.path, "class": cls.name, "line": cls.line, "method": pub[0]})
+
+    defined_field_sets = [frozenset(m["fields"]) for m in models if len(m["fields"]) >= 3]
+    repeated_dicts: list[dict] = []
+    for keys, locs in dict_occurrences.items():
+        if any(keys <= df for df in defined_field_sets):
+            continue
+        distinct_files = sorted({p for p, _ in locs})
+        if len(distinct_files) >= 2:
+            seen_loc: list[str] = []
+            for p, ln in sorted(set(locs)):
+                if len(seen_loc) < 6:
+                    seen_loc.append(f"{p}:{ln}")
+            repeated_dicts.append({
+                "keys": sorted(keys), "modules": len(distinct_files), "locations": seen_loc,
+            })
+    repeated_dicts.sort(key=lambda r: (-r["modules"], -len(r["keys"]), r["keys"]))
+
+    scattered_io = [
+        {"kind": kind, "module_count": len(paths), "paths": sorted(paths)[:8]}
+        for kind, paths in sorted(io_by_kind.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        if len(paths) >= 3
+    ]
+    single_impl_abc = [
+        {"module": c["module"], "path": c["path"], "class": c["name"], "line": c["line"], "subclasses": c["subclasses"]}
+        for c in classes if c["abstract"] and c["subclasses"] <= 1
+    ]
+
+    return {
+        "tangled_orchestrators": sorted(tangled, key=lambda x: (-x["lines"], -x["internal_deps"])),
+        "repeated_dict_keys": repeated_dicts,
+        "dict_boundaries": dict_boundaries,
+        "impure_shared_modules": sorted(impure_shared, key=lambda x: (-x["fan_in"], x["path"])),
+        "scattered_io": scattered_io,
+        "global_effects": global_effects,
+        "grab_bag_modules": sorted(grab_bags, key=lambda x: (-x["fan_in"], -x["definitions"])),
+        "single_impl_abstractions": single_impl_abc,
+        "one_method_classes": one_method,
+    }
+
+
 def package_table(index: RepoIndex) -> list[dict]:
     stats: dict[str, dict] = defaultdict(lambda: {"files": 0, "lines": 0, "tests": 0})
     for mod in index.modules.values():
@@ -403,6 +762,9 @@ def collect(index: RepoIndex, include_tests: bool, depth: int) -> dict:
     calls = process_calls(index)
     process_edges = sorted({(collapse(c["from"], depth, dirs), collapse(c["to"], depth, dirs))
                             for c in calls if c["from"] in index.modules})
+    classes = class_facts(index, include_tests)
+    models = data_models(index, include_tests)
+    signals = architecture_signals(index, edges, classes, models)
     return {
         "root": str(index.root),
         "totals": {
@@ -425,7 +787,9 @@ def collect(index: RepoIndex, include_tests: bool, depth: int) -> dict:
         "process_edges": [{"from": a, "to": b} for a, b in process_edges if a != b],
         "unresolved_internal_imports": unresolved,
         "suspected_source_roots": index.suspected_source_roots(),
-        "classes": class_facts(index, include_tests),
+        "data_models": models,
+        "architecture_signals": signals,
+        "classes": classes,
         "hotspots": hotspots(index),
         "duplicates": duplicates(index),
         "frontend": [asdict(f) for f in index.frontend],
@@ -434,6 +798,7 @@ def collect(index: RepoIndex, include_tests: bool, depth: int) -> dict:
 
 def fmt_brief(facts: dict) -> str:
     t, d, h = facts["totals"], facts["duplicates"], facts["hotspots"]
+    sig = facts["architecture_signals"]
     rows = [
         ("Python files / lines", f"{t['python_files']} / {t['python_lines']} ({t['test_files']} test files)"),
         ("Frontend files / lines", f"{t['frontend_files']} / {t['frontend_lines']}"),
@@ -442,6 +807,10 @@ def fmt_brief(facts: dict) -> str:
         *([("Imports that may point at a missing source root",
             ", ".join(f"`{r['import_root']}` ({r['imports']})" for r in facts["suspected_source_roots"][:5]))]
           if facts["suspected_source_roots"] else []),
+        ("Explicit data models / implicit repeated dict shapes",
+         f"{len(facts['data_models'])} / {len(sig['repeated_dict_keys'])}"),
+        ("Tangled orchestrators / impure shared modules / grab-bags",
+         f"{len(sig['tangled_orchestrators'])} / {len(sig['impure_shared_modules'])} / {len(sig['grab_bag_modules'])}"),
         ("Identical files (groups)", str(len(d["identical_files"]))),
         ("Copied / renamed-copy function groups", f"{len(d['functions'])} / {len(d['renamed_functions'])}"),
         (f"Modules >= {BIG_MODULE} lines / classes >= {BIG_CLASS} lines",
@@ -456,13 +825,18 @@ def fmt_summary(facts: dict, limit: int) -> str:
     t = facts["totals"]
     out = [f"# Architecture facts: {facts['root']}", ""]
     out.append(f"- Python: {t['python_files']} files, {t['python_lines']} lines ({t['test_files']} test files); "
-               f"{t['classes']} classes, {t['functions']} functions")
+               f"{t['classes']} classes ({len(facts['data_models'])} explicit data models), {t['functions']} functions")
     if t["frontend_files"]:
         out.append(f"- Frontend: {t['frontend_files']} files, {t['frontend_lines']} lines")
     out += ["", "## Top-level directories", "", "| dir | py files | py lines | test files | frontend lines |",
             "|---|---|---|---|---|"]
     for row in facts["packages"][:limit]:
         out.append(f"| {row['dir']} | {row['files']} | {row['lines']} | {row['tests']} | {row['frontend_lines']} |")
+
+    entries = facts["entry_points"]
+    out.extend(["", f"## Entry points (`__main__` guard) ({len(entries)})", ""])
+    out.append(", ".join(f"`{p}`" for p in entries[:10]) + (f" … {len(entries) - 10} more" if len(entries) > 10 else "")
+               if entries else "- none")
 
     def section(title: str, items: list, render) -> None:
         out.extend(["", f"## {title} ({len(items)})", ""])
@@ -493,6 +867,39 @@ def fmt_summary(facts: dict, limit: int) -> str:
     section("Package coupling (fan-in / fan-out)", nodes, lambda n: f"`{n}` in={fan_in[n]} out={fan_out[n]}")
     section("Process-level calls (subprocess, shell scripts)", facts["process_calls"],
             lambda c: f"`{c['path']}:{c['line']}` runs `{c['to']}`")
+
+    sig = facts["architecture_signals"]
+    section("Explicit data models (@dataclass / BaseModel / TypedDict / Enum)", facts["data_models"],
+            lambda m: f"`{m['module']}.{m['name']}` (`{m['path']}:{m['line']}`) fields={m['fields'][:6]}"
+                      + (f" (+{len(m['fields']) - 6})" if len(m["fields"]) > 6 else "")
+                      + f", used by {m['used_by_modules']} module(s)")
+    section("Tangled orchestrators (cross-module flow mixed with direct I/O or deep nesting)",
+            sig["tangled_orchestrators"],
+            lambda x: f"`{x['path']}:{x['line']}` `{x['function']}` ({x['lines']} lines, calls {x['internal_deps']} "
+                      f"internal modules, io={x['direct_io'] or 'none'}, nesting={x['nesting']})")
+    section("Implicit data shapes (same >=3 dict keys repeated across modules — candidate @dataclass)",
+            sig["repeated_dict_keys"],
+            lambda r: f"keys `{', '.join(r['keys'])}` across {r['modules']} modules: "
+                      + ", ".join(f"`{loc}`" for loc in r["locations"]))
+    section("Weak dict/Any module boundaries", sig["dict_boundaries"],
+            lambda b: f"`{b['path']}:{b['line']}` `{b['function']}` — {b['reason']}")
+    section("Impure shared/core modules (domain or shared modules doing direct external I/O)",
+            sig["impure_shared_modules"],
+            lambda m: f"`{m['path']}` (fan-in {m['fan_in']}) mixes {', '.join(m['io_kinds'])} (e.g. {m['example']})")
+    section("Scattered external I/O (>= 3 modules touching the same I/O boundary)",
+            sig["scattered_io"],
+            lambda s: f"`{s['kind']}` spread across {s['module_count']} modules: "
+                      + ", ".join(f"`{p}`" for p in s["paths"]))
+    section("Module-level mutable state & import-time side effects", sig["global_effects"],
+            lambda g: f"`{g['path']}:{g['line']}` [{g['kind']}] {g['detail']}")
+    section("Grab-bag modules (utils / common / helpers)", sig["grab_bag_modules"],
+            lambda g: f"`{g['path']}` ({g['definitions']} top-level defs, imported by {g['fan_in']} module(s))")
+    bloat = [f"`{a['path']}:{a['line']}` abstract `{a['class']}` has {a['subclasses']} subclass(es)"
+             for a in sig["single_impl_abstractions"]] + [
+             f"`{o['path']}:{o['line']}` class `{o['class']}` only has `__init__` + `{o['method']}()` (candidate function)"
+             for o in sig["one_method_classes"]]
+    section("Speculative abstractions & one-method classes", bloat, lambda s: s)
+
     section("Core class candidates", [c for c in facts["classes"] if c["weight"] > 0],
             lambda c: f"`{c['module']}.{c['name']}`" + (" (abstract)" if c["abstract"] else "")
                       + f" weight {c['weight']}: {c['subclasses']} subclasses, {len(c['collaborators'])} collaborators, "
@@ -524,10 +931,6 @@ def fmt_summary(facts: dict, limit: int) -> str:
     big_fe = sorted(facts["frontend"], key=lambda f: -f["lines"])
     section("Frontend files", big_fe, lambda f: f"`{f['path']}` {f['lines']} lines"
             + (f", {f['inline_script_lines']} inline script lines" if f["inline_script_lines"] else ""))
-    entries = facts["entry_points"]
-    out.extend(["", f"## Entry points (`__main__` guard) ({len(entries)})", ""])
-    out.append(", ".join(f"`{p}`" for p in entries[:10]) + (f" … {len(entries) - 10} more" if len(entries) > 10 else "")
-               if entries else "- none")
     return "\n".join(out) + "\n"
 
 
@@ -621,7 +1024,7 @@ def mermaid_classes(facts: dict, max_nodes: int, focus: str | None) -> str:
 
 
 def load_rules(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8", errors="replace")
     if path.suffix == ".json":
         return json.loads(text)
     try:
@@ -656,13 +1059,20 @@ def check(index: RepoIndex, facts: dict, rules: dict) -> list[str]:
         return None
 
     edge_lines: dict[tuple[str, str], list[str]] = defaultdict(list)
+    external_lines: dict[tuple[str, str], list[str]] = defaultdict(list)
     for mod in index.modules.values():
         for ref in mod.imports:
             if ref.guarded == "TYPE_CHECKING":
                 continue
-            for target, _ in index.resolve(mod, ref):
-                if target and target != mod.name:
-                    edge_lines[(mod.name, target)].append(f"{mod.path}:{ref.line}")
+            resolved = index.resolve(mod, ref)
+            if any(t for t, _ in resolved):
+                for target, _ in resolved:
+                    if target and target != mod.name:
+                        edge_lines[(mod.name, target)].append(f"{mod.path}:{ref.line}")
+            elif not ref.level and ref.target:
+                external_lines[(mod.name, ref.target)].append(f"{mod.path}:{ref.line}")
+                for name in ref.names:
+                    external_lines[(mod.name, f"{ref.target}.{name}")].append(f"{mod.path}:{ref.line}")
     for (a, b), where in sorted(edge_lines.items()):
         la, lb = layer_of(a), layer_of(b)
         if la is not None and lb is not None and lb < la:
@@ -672,6 +1082,16 @@ def check(index: RepoIndex, facts: dict, rules: dict) -> list[str]:
             if matches(a, [rule["from"]]) and matches(b, [rule["to"]]):
                 reason = f" ({rule['reason']})" if rule.get("reason") else ""
                 violations.append(f"forbidden: `{a}` imports `{b}`{reason} — {where[0]}")
+    seen_ext_forbid: set[tuple[str, int, str]] = set()
+    for (a, ext), where in sorted(external_lines.items()):
+        for r_idx, rule in enumerate(rules.get("forbid", [])):
+            if matches(a, [rule["from"]]) and matches(ext, [rule["to"]]):
+                loc = where[0]
+                if (a, r_idx, loc) in seen_ext_forbid:
+                    continue
+                seen_ext_forbid.add((a, r_idx, loc))
+                reason = f" ({rule['reason']})" if rule.get("reason") else ""
+                violations.append(f"forbidden: `{a}` imports `{ext}`{reason} — {loc}")
     budget = rules.get("budgets", {})
     h_mod = budget.get("max_module_lines")
     h_fn = budget.get("max_function_lines")
@@ -725,7 +1145,7 @@ CODE_TOKEN = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[\w.-]+(?:/[\w.-]+)+/?
 
 
 def mermaid_blocks(path: Path) -> list[tuple[int, str]]:
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8", errors="replace")
     if path.suffix != ".md":
         return [(1, text)]
     return [(text[:m.start()].count("\n") + 2, m.group(1))
@@ -835,7 +1255,7 @@ def verify(index: RepoIndex, facts: dict, target: Path) -> list[str]:
     files = [target] if target.is_file() else sorted(p for p in target.rglob("*") if p.suffix in (".mmd", ".md"))
     out = []
     for path in files:
-        rel = path.relative_to(index.root) if path.is_relative_to(index.root) else path
+        rel = path.relative_to(index.root).as_posix() if path.is_relative_to(index.root) else path.as_posix()
         for start, block in mermaid_blocks(path):
             for no, problem in verify_diagram(index, facts, block):
                 out.append(f"`{rel}:{start + no - 1}` {problem}")
@@ -849,7 +1269,7 @@ TEXT_NAMES = ("Dockerfile", "Makefile", "Procfile", "Justfile")
 
 def importers(index: RepoIndex, target: str, limit: int) -> str:
     """Everything that references a module or package: imports (tests included) and text mentions."""
-    target = index.canonical(target.strip().strip("/").replace("/", ".").removesuffix(".py"))
+    target = index.canonical(target.strip().replace("\\", "/").strip("/").replace("/", ".").removesuffix(".py"))
     inside = lambda name: name == target or name.startswith(target + ".")  # noqa: E731
     imports: list[str] = []
     import_lines: set[tuple[str, int]] = set()
@@ -896,6 +1316,7 @@ def importers(index: RepoIndex, target: str, limit: int) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", nargs="?", default="summary",
                         choices=["summary", "json", "mermaid", "check", "importers", "verify"])

@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -12,9 +13,14 @@ SCRIPTS = ROOT / "skills" / "clean-arch" / "scripts"
 FIXTURE = ROOT / "tests" / "fixtures" / "sample_repo"
 
 
+def _rmtree_onerror(func, path, _exc):
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
 def run(script: str, repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(SCRIPTS / script), "--root", str(repo), *args],
-                          capture_output=True, text=True, timeout=120)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
 
 class FixtureRepo(unittest.TestCase):
@@ -24,7 +30,7 @@ class FixtureRepo(unittest.TestCase):
         shutil.copytree(FIXTURE, self.repo)
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        shutil.rmtree(self.tmp, onerror=_rmtree_onerror)
 
     def git(self, *args: str):
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args], cwd=self.repo,
@@ -159,12 +165,14 @@ class ArchFactsTest(FixtureRepo):
         docs.mkdir()
         (docs / "ok.mmd").write_text(
             'flowchart TD\n  svc["shop.services"] --> core["shop.core"]\n'
-            '  jobs["shop/jobs.py"] -.->|subprocess| rep["shop.services.report"]\n  user([用户]) --> jobs\n')
+            '  jobs["shop/jobs.py"] -.->|subprocess| rep["shop.services.report"]\n  user([用户]) --> jobs\n',
+            encoding="utf-8")
         self.assertEqual(run("arch_facts.py", self.repo, "verify", "docs/ok.mmd").returncode, 0)
         (docs / "plan.md").write_text(
             "# Plan\n\n```mermaid\nflowchart LR\n  m[\"shop.core.models\"] --> p[\"shop.core.pricing\"]\n"
             "  g[\"shop.ghost\"] --> m\n```\n\n```mermaid\nclassDiagram\n  class Ghost\n"
-            "  Dispatcher <|-- EmailChannel\n```\n")
+            "  Dispatcher <|-- EmailChannel\n```\n",
+            encoding="utf-8")
         result = run("arch_facts.py", self.repo, "verify", "docs/plan.md")
         self.assertEqual(result.returncode, 1)
         for expected in ["plan.md:5` `shop.core.models` does not import `shop.core.pricing` (the arrow is reversed)",
@@ -200,12 +208,70 @@ class ArchFactsTest(FixtureRepo):
         result = run("arch_facts.py", self.repo, "check", "--rules", str(template))
         self.assertIn("violation(s)", result.stdout, result.stderr)
 
+    def test_architecture_signals_on_fixture(self):
+        facts = self.facts()
+        models = [m["name"] for m in facts["data_models"]]
+        self.assertEqual(models, ["Order"])
+        sig = facts["architecture_signals"]
+        self.assertTrue(any(r["keys"] == ["average", "count", "total"] and r["modules"] >= 2
+                            for r in sig["repeated_dict_keys"]), sig["repeated_dict_keys"])
+        self.assertTrue(any(b["path"] == "shop/core/stats.py" and b["function"] == "summarize"
+                            for b in sig["dict_boundaries"]), sig["dict_boundaries"])
+        self.assertTrue(any(g["path"] == "shop/services/utils.py" for g in sig["grab_bag_modules"]))
+        self.assertTrue(any(g["path"] == "shop/services/utils.py" and g["kind"] == "mutable-global"
+                            for g in sig["global_effects"]), sig["global_effects"])
+        self.assertEqual([a["class"] for a in sig["single_impl_abstractions"]], ["Channel"])
+        self.assertEqual([o["class"] for o in sig["one_method_classes"]], ["Dispatcher"])
+        summary = run("arch_facts.py", self.repo, "summary").stdout
+        self.assertIn("Implicit data shapes", summary)
+        self.assertIn("Grab-bag modules", summary)
+        self.assertIn("Speculative abstractions", summary)
+
+    def test_tangled_orchestrator_impure_core_and_external_forbid(self):
+        body = "\n".join([
+            "import json",
+            "import os",
+            "import requests",
+            "from shop.core.pricing import total",
+            "from shop.services.billing import invoice_lines",
+            "",
+            "def run_everything(orders, out_path):",
+            "    api = os.getenv('BILLING_URL', 'http://localhost')",
+            "    rows = []",
+            "    for item in orders:",
+            "        if item.amount > 0:",
+            "            for line in invoice_lines(item, 0.0):",
+            "                if line:",
+            "                    rows.append((line, total(item, 0.1)))",
+        ] + [f"    step_{i} = len(rows) + {i}" for i in range(30)] + [
+            "    requests.post(api, json={'n': step_29})",
+            "    with open(out_path, 'w', encoding='utf-8') as fh:",
+            "        json.dump(rows, fh)",
+            "    return rows",
+        ])
+        (self.repo / "shop" / "core" / "pipeline_mess.py").write_text(body + "\n", encoding="utf-8")
+        facts = self.facts()
+        sig = facts["architecture_signals"]
+        self.assertTrue(any(t["function"] == "run_everything" for t in sig["tangled_orchestrators"]),
+                        sig["tangled_orchestrators"])
+        self.assertTrue(any(m["path"] == "shop/core/pipeline_mess.py" for m in sig["impure_shared_modules"]),
+                        sig["impure_shared_modules"])
+        rules = self.repo / ".clean-arch" / "rules.toml"
+        rules.parent.mkdir(exist_ok=True)
+        rules.write_text(
+            '[[forbid]]\nfrom = "shop.core*"\nto = "requests*"\nreason = "core must not do HTTP"\n',
+            encoding="utf-8",
+        )
+        chk = run("arch_facts.py", self.repo, "check")
+        self.assertEqual(chk.returncode, 1)
+        self.assertIn("forbidden: `shop.core.pipeline_mess` imports `requests` (core must not do HTTP)", chk.stdout)
+
 
 def write_repo(root: Path, files: dict[str, str]) -> None:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
 
 
 SRC_FILES = {
@@ -352,7 +418,7 @@ class PerfCheckTest(unittest.TestCase):
     def perf(self, *args: str) -> subprocess.CompletedProcess:
         env = {**os.environ, "CLEAN_ARCH_LESSONS": str(self.store)}
         return subprocess.run([sys.executable, str(SCRIPTS / "perf_check.py"), "--root", str(self.repo), *args],
-                              capture_output=True, text=True, timeout=120, env=env)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env)
 
     def test_scan_finds_known_patterns_and_skips_tests(self):
         result = self.perf("scan", "--format", "json")

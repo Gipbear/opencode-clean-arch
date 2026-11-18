@@ -26,7 +26,7 @@ export function runScript(
   return new Promise((resolve, reject) => {
     const child = spawn(python, [path.join(SCRIPTS_DIR, script), "--root", root, ...args], {
       cwd: root,
-      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" },
+      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONDONTWRITEBYTECODE: "1" },
       signal,
       timeout: timeoutMs,
     })

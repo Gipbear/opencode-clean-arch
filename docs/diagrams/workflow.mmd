@@ -1,11 +1,24 @@
-flowchart LR
-  subgraph RO[只读阶段]
-    B[0 基线<br/>测试 + 事实] --> D[1 诊断<br/>arch-diagnose]
-    D --> P[2 方案<br/>arch-plan]
+flowchart TD
+  subgraph ro["只读诊断"]
+    direction LR
+    B["0 基线<br/>测试 + 静态信号"] --> D["1 诊断<br/>脉络 / 数据契约 / 边界 vs 卫生项"]
   end
-  P --> R{浏览器评审}
-  R -- 要求修改 --> P
-  R -- 批准 --> E[3 执行<br/>restructure-modules<br/>simplify-code]
-  E --> G[4 收尾门禁<br/>clean-finish<br/>comment-hygiene]
-  G -- 未通过 --> E
-  G -- 通过 --> M[5 文档<br/>arch-map 4+1]
+  subgraph r1["第一轮：定蓝图 + 减法消噪"]
+    direction LR
+    P1["2a 方案 R1<br/>目标架构蓝图 + 清扫步骤"] --> RV1{"浏览器评审"}
+    RV1 -- "修改" --> P1
+    RV1 -- "批准" --> E1["2b 执行清扫<br/>删平行版本 / 死代码 / 兼容层"]
+  end
+  subgraph r2["第二轮：立契约 + 塑主干"]
+    direction LR
+    P2["3a 方案 R2<br/>dataclass + I/O 归口 + 薄主干"] --> RV2{"浏览器评审"}
+    RV2 -- "修改" --> P2
+    RV2 -- "批准" --> E2["3b 执行重塑<br/>扁平三层 + 零单实现抽象"]
+  end
+  subgraph fin["门禁与文档"]
+    direction LR
+    G["4 收尾门禁<br/>零遗留 + rules.toml 分层检查"] --> M["5 架构文档<br/>4+1 视图 + 自包含 SVG"]
+  end
+  ro --> r1
+  r1 --> r2
+  r2 --> fin

@@ -11,9 +11,20 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def ensure_utf8_stdio() -> None:
+    """Avoid UnicodeEncodeError on Windows consoles using legacy code pages (e.g. gbk)."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
 SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv", "env",
@@ -504,7 +515,7 @@ def build_index(root: Path, include: list[str] | None = None) -> RepoIndex:
     root = root.resolve()
     files = list_files(root)
     if include:
-        prefixes = [p.rstrip("/") for p in include]
+        prefixes = [p.replace("\\", "/").rstrip("/") for p in include]
         files = [f for f in files if any(f == p or f.startswith(p + "/") for p in prefixes)]
     modules: dict[str, Module] = {}
     by_path: dict[str, Module] = {}

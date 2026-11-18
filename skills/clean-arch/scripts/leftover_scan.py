@@ -35,7 +35,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pyindex import RepoIndex, build_index, comment_tokens  # noqa: E402
+from pyindex import RepoIndex, build_index, comment_tokens, ensure_utf8_stdio  # noqa: E402
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
@@ -88,12 +88,12 @@ def scan_version_names(index: RepoIndex, out: list[Finding]) -> None:
         stem = p.stem
         if VERSION_FILE.search(stem) and not stem.startswith("test_"):
             base = VERSION_FILE.sub("_", stem).strip("_-.")
-            stems[(str(p.parent), base)].append(rel)
+            stems[(p.parent.as_posix(), base)].append(rel)
             out.append(Finding("version-name", "medium", rel, 1, f"file name `{p.name}` looks like a version marker"))
     for (parent, base), files in stems.items():
         for suffix in (".py", ".js", ".ts", ".html", ".css"):
-            original = Path(parent) / f"{base}{suffix}"
-            if str(original) in index.by_path or any(f.path == str(original) for f in index.frontend):
+            original = f"{base}{suffix}" if parent == "." else f"{parent}/{base}{suffix}"
+            if original in index.by_path or any(f.path == original for f in index.frontend):
                 out.append(Finding("parallel-version", "high", files[0], 1,
                                    f"`{files[0]}` coexists with `{original}`; keep one implementation"))
     for mod in index.modules.values():
@@ -436,6 +436,7 @@ def render_md(findings: list[Finding], limit: int, warnings: list[str] | None = 
 
 
 def main(argv: list[str] | None = None) -> int:
+    ensure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", default=".")
     parser.add_argument("--since", help="only report files changed since this git ref")
@@ -463,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
         scope = changed_files(root, args.since)
         findings = [f for f in findings if f.path in scope or scope.intersection(f.related)]
     if args.include:
-        prefixes = [p.rstrip("/") for p in args.include]
+        prefixes = [p.replace("\\", "/").rstrip("/") for p in args.include]
         findings = [f for f in findings
                     if any(q == p or q.startswith(p + "/") for p in prefixes for q in (f.path, *f.related))]
     seen = set()
