@@ -4,15 +4,19 @@
 Commands:
   scan     Static candidates: known slow patterns (per-item Transformer/Point creation, iterrows,
            np.add.at, array growth in loops, GPU syncs in loops, ...). Matches are not measurements.
-  env      Versions and backends of the performance-relevant libraries in a Python environment
-           (protobuf backend, LAZ decoder, thread settings, ...). Use --python for the project's venv.
-  bench    Run a shell command repeatedly, report median and spread, save the result under
-           .clean-arch/perf/, and compare with a saved baseline (--compare).
+  env      Versions, backends and installed open-source profilers in a Python environment
+           (protobuf backend, LAZ decoder, thread settings, py-spy/pyinstrument/memray/scalene).
+  profile  Run CPU, memory (OS Peak RSS + Python/native heap) and/or import-time profilers, using
+           py-spy, pyinstrument or memray when installed and falling back to stdlib cProfile,
+           tracemalloc and -X importtime; writes self-contained flame-graph SVGs under .clean-arch/perf/.
+  bench    Run a shell command repeatedly, measure wall time + OS Peak RSS (MB) + PERF_METRIC lines,
+           save under .clean-arch/perf/, and render a comparison SVG when --compare is passed.
   lessons  Search the persistent store of measured optimization lessons, or add one (--entry).
 
 Usage:
   perf_check.py --root . scan [--include PATH ...] [--include-tests] [--limit N] [--format md|json]
   perf_check.py --root . env [--python EXE] [--format md|json]
+  perf_check.py --root . profile NAME [--mode all|cpu|memory|import] [--python EXE] (--target "-m pkg.job" | --cmd "...")
   perf_check.py --root . bench NAME --cmd "python -m pkg.job" [--runs 7] [--warmup 1] [--compare BASE]
   perf_check.py --root . lessons [--query "shapely contains"] [--entry "## title\\n- status: verified ..."]
 
@@ -38,6 +42,15 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from perf_viz import (  # noqa: E402
+    find_tool_near_python,
+    parse_target_args,
+    profile_cpu,
+    profile_imports,
+    profile_memory,
+    render_bench_svg,
+    run_measured_command,
+)
 from pyindex import ensure_utf8_stdio, list_files  # noqa: E402
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -390,14 +403,20 @@ from importlib import metadata
 out = {"python": sys.version.split()[0], "platform": platform.platform(), "cpu_count": os.cpu_count(),
        "env": {k: os.environ.get(k) for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                "NUMEXPR_NUM_THREADS", "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "PROJ_NETWORK")},
-       "packages": {}, "checks": {}}
+       "packages": {}, "profilers": {}, "checks": {}}
 DISTS = ["numpy", "scipy", "pandas", "polars", "torch", "torchvision", "shapely", "pyproj", "scikit-learn",
          "laspy", "lazrs", "laszip", "opencv-python", "opencv-python-headless", "opencv-contrib-python",
          "opencv-contrib-python-headless", "protobuf", "POT", "joblib", "threadpoolctl", "numba", "orjson",
          "uvloop", "geopandas", "rasterio", "open3d", "faiss-cpu", "faiss-gpu", "pykeops", "geomloss"]
+PROF_DISTS = ["py-spy", "pyinstrument", "memray", "scalene", "line-profiler", "psutil"]
 for name in DISTS:
     try:
         out["packages"][name] = metadata.version(name)
+    except metadata.PackageNotFoundError:
+        pass
+for name in PROF_DISTS:
+    try:
+        out["profilers"][name] = metadata.version(name)
     except metadata.PackageNotFoundError:
         pass
 P = out["packages"]
@@ -460,7 +479,10 @@ def probe_env(python: str) -> dict:
                             env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"})
     if result.returncode != 0:
         sys.exit(f"probe failed with {python!r} (exit {result.returncode}): {result.stderr.strip()[-500:]}")
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    data = json.loads(result.stdout.strip().splitlines()[-1])
+    if "py-spy" not in data.get("profilers", {}) and find_tool_near_python(python, "py-spy"):
+        data.setdefault("profilers", {})["py-spy"] = "cli-in-path"
+    return data
 
 
 def _major_minor(version: str) -> tuple[int, int]:
@@ -502,6 +524,11 @@ def env_findings(data: dict) -> list[tuple[str, str]]:
         found.append(("info", "torch is installed but CUDA is not available in this environment."))
     if isinstance(checks.get("pyproj"), dict) and checks["pyproj"].get("network"):
         found.append(("info", "PROJ network access is enabled; offline machines may stall on grid downloads (PROJ_NETWORK=OFF)."))
+    profs = data.get("profilers", {})
+    if not any(k in profs for k in ("py-spy", "pyinstrument")):
+        extra = " memray" if os.name != "nt" else ""
+        found.append(("info", f"No low-overhead sampling profiler installed (`clean_arch_perf profile` will use stdlib "
+                              f"`cProfile` + `tracemalloc` + OS Peak RSS). Optional upgrade: `pip install py-spy pyinstrument{extra}`."))
     return found
 
 
@@ -509,6 +536,9 @@ def render_env(data: dict) -> str:
     out = ["# Performance environment", "", f"- Python {data['python']} on {data['platform']}, {data['cpu_count']} logical CPUs"]
     thread_env = {k: v for k, v in data["env"].items() if v}
     out.append("- Environment: " + (", ".join(f"{k}={v}" for k, v in thread_env.items()) if thread_env else "no thread or backend variables set"))
+    profs = data.get("profilers", {})
+    out.append("- Profilers: " + (", ".join(f"{k} ({v})" for k, v in profs.items())
+               if profs else "stdlib only (cProfile, tracemalloc, -X importtime, OS Peak RSS)"))
     out += ["", "| Package | Version |", "|---|---|"]
     out += [f"| {name} | {version} |" for name, version in data["packages"].items()]
     if not data["packages"]:
@@ -542,24 +572,28 @@ def stats(values: list[float]) -> dict:
 
 def run_bench(command: str, cwd: Path, runs: int, warmup: int, timeout: float | None) -> dict[str, list[float]]:
     metrics: dict[str, list[float]] = {"wall": []}
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
     for i in range(warmup + runs):
-        start = time.perf_counter()
-        proc = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout, env=env)
-        elapsed = time.perf_counter() - start
-        if proc.returncode != 0:
-            tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-15:])
-            sys.exit(f"command failed (exit {proc.returncode}) on run {i + 1}:\n{tail}")
+        sample = run_measured_command(command, cwd, timeout)
+        if sample.returncode != 0:
+            tail = "\n".join((sample.stderr or sample.stdout).strip().splitlines()[-15:])
+            sys.exit(f"command failed (exit {sample.returncode}) on run {i + 1}:\n{tail}")
         if i < warmup:
             continue
-        metrics["wall"].append(elapsed)
-        for name, value in {m[0]: float(m[1]) for m in METRIC.findall(proc.stdout)}.items():
+        metrics["wall"].append(sample.elapsed)
+        if sample.peak_mb is not None:
+            metrics.setdefault("peak_mb", []).append(sample.peak_mb)
+        for name, value in {m[0]: float(m[1]) for m in METRIC.findall(sample.stdout)}.items():
             metrics.setdefault(name, []).append(value)
     return {k: v for k, v in metrics.items() if len(v) == runs}
 
 
-def fmt_seconds(value: float) -> str:
+def _is_mem_metric(metric: str) -> bool:
+    return metric == "peak_mb" or metric.endswith("_mb")
+
+
+def fmt_metric(metric: str, value: float) -> str:
+    if _is_mem_metric(metric):
+        return f"{value:.1f} MB" if value >= 10 else f"{value:.2f} MB"
     if value >= 100:
         return f"{value:.1f}"
     if value >= 1:
@@ -567,13 +601,39 @@ def fmt_seconds(value: float) -> str:
     return f"{value:.4f}"
 
 
-def render_bench(name: str, command: str, result: dict, baseline: dict | None, threshold: float, base_name: str | None) -> str:
+def compute_comparisons(computed: dict[str, dict], baseline: dict, threshold: float) -> list[dict]:
+    rows = []
+    for metric, new in computed.items():
+        if metric not in baseline.get("metrics", {}):
+            continue
+        old = stats(baseline["metrics"][metric])
+        change = (new["median"] - old["median"]) / old["median"] if old["median"] else 0.0
+        band = max(threshold, old["spread"], new["spread"])
+        mem = _is_mem_metric(metric)
+        if abs(change) <= band:
+            verdict = "within noise"
+        elif change < 0:
+            verdict = "lower" if mem else "faster"
+        else:
+            verdict = "HIGHER" if mem else "SLOWER"
+        rows.append({
+            "metric": metric,
+            "old_min": old["min"], "old_med": old["median"], "old_max": old["max"],
+            "new_min": new["min"], "new_med": new["median"], "new_max": new["max"],
+            "change": change, "verdict": verdict,
+        })
+    return rows
+
+
+def render_bench(name: str, command: str, result: dict, baseline: dict | None, threshold: float,
+                 base_name: str | None, svg_rel: str | None = None) -> str:
     out = [f"# Benchmark `{name}`", "", f"Command: `{command}`", f"Runs: {result['runs']} (after {result['warmup']} warm-up), "
-           "lower is better. Wall time includes interpreter start-up and imports.", "",
+           "lower is better. `wall` includes start-up/imports; `peak_mb` is OS Peak RSS (Python + C/native buffers).", "",
            "| Metric | min | median | max | spread |", "|---|---|---|---|---|"]
     computed = {k: stats(v) for k, v in result["metrics"].items()}
     for metric, s in computed.items():
-        out.append(f"| {metric} | {fmt_seconds(s['min'])} | {fmt_seconds(s['median'])} | {fmt_seconds(s['max'])} | {s['spread']:.1%} |")
+        out.append(f"| {metric} | {fmt_metric(metric, s['min'])} | {fmt_metric(metric, s['median'])} "
+                   f"| {fmt_metric(metric, s['max'])} | {s['spread']:.1%} |")
     noisy = [m for m, s in computed.items() if s["spread"] > 0.10]
     if noisy:
         out += ["", f"WARNING: spread above 10% for {', '.join(noisy)}. Reduce noise (other load, input size, GC, caches) "
@@ -583,15 +643,13 @@ def render_bench(name: str, command: str, result: dict, baseline: dict | None, t
         if baseline.get("command") != command:
             out.append(f"WARNING: the baseline ran a different command: `{baseline.get('command')}`")
         out += ["| Metric | baseline median | new median | change | verdict |", "|---|---|---|---|---|"]
-        for metric, new in computed.items():
-            if metric not in baseline["metrics"]:
-                continue
-            old = stats(baseline["metrics"][metric])
-            change = (new["median"] - old["median"]) / old["median"] if old["median"] else 0.0
-            band = max(threshold, old["spread"], new["spread"])
-            verdict = "within noise" if abs(change) <= band else ("faster" if change < 0 else "SLOWER")
-            out.append(f"| {metric} | {fmt_seconds(old['median'])} | {fmt_seconds(new['median'])} | {change:+.1%} | {verdict} |")
+        for row in compute_comparisons(computed, baseline, threshold):
+            m = row["metric"]
+            out.append(f"| {m} | {fmt_metric(m, row['old_med'])} | {fmt_metric(m, row['new_med'])} "
+                       f"| {row['change']:+.1%} | {row['verdict']} |")
         out += ["", f"A change counts only when it exceeds max({threshold:.0%}, the larger spread of the two runs)."]
+        if svg_rel:
+            out += ["", f"Comparison chart: `{svg_rel}`", f"Embed in `.clean-arch/perf.md`: `![Benchmark {name} vs {base_name}]({svg_rel.removeprefix('.clean-arch/')})`"]
     return "\n".join(out) + "\n"
 
 
@@ -614,8 +672,118 @@ def cmd_bench(args: argparse.Namespace) -> int:
     result = {"name": args.name, "command": args.cmd, "runs": args.runs, "warmup": args.warmup,
               "created": date.today().isoformat(), "python": sys.version.split()[0], "metrics": metrics}
     (store / f"bench-{args.name}.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
-    sys.stdout.write(render_bench(args.name, args.cmd, result, baseline, args.threshold, args.compare))
+    svg_rel: str | None = None
+    if baseline:
+        computed = {k: stats(v) for k, v in metrics.items()}
+        comp_rows = compute_comparisons(computed, baseline, args.threshold)
+        if comp_rows:
+            svg_path = store / f"bench-{args.name}-vs-{args.compare}.svg"
+            svg_path.write_text(
+                render_bench_svg(f"Benchmark Comparison — {args.name} vs {args.compare}",
+                                 comp_rows, args.compare, args.name),
+                encoding="utf-8",
+            )
+            svg_rel = svg_path.relative_to(root).as_posix()
+    sys.stdout.write(render_bench(args.name, args.cmd, result, baseline, args.threshold, args.compare, svg_rel))
     sys.stdout.write(f"\nSaved to .clean-arch/perf/bench-{args.name}.json\n")
+    return 0
+
+
+# --------------------------------------------------------------------------- profile
+
+def render_profile(name: str, data: dict) -> str:
+    out = [f"# Profile `{name}`", "", f"Target: `{data['command']}`"]
+    svgs: list[str] = []
+
+    if "cpu" in data:
+        cpu = data["cpu"]
+        out += ["", f"## CPU / Wall-Clock Profile (`{cpu['tool']}`, total `{cpu['total_sec']}s`)"]
+        if cpu.get("svg"):
+            svgs.append(cpu["svg"])
+            out.append(f"- Flame graph SVG: `{cpu['svg']}`")
+        out += ["", "### Top functions by cumulative time (call path)", "",
+                "| Function | cum (s) | self (s) | % | Location |", "|---|---|---|---|---|"]
+        for r in cpu.get("top_cumulative", [])[:10]:
+            out.append(f"| `{r['function']}` | {r['cum_sec']} | {r['self_sec']} | {r['pct']}% | `{r['where']}` |")
+        out += ["", "### Top functions by own/self time (leaf CPU hotspots)", "",
+                "| Function | self (s) | cum (s) | % | Location |", "|---|---|---|---|---|"]
+        for r in cpu.get("top_self", [])[:10]:
+            out.append(f"| `{r['function']}` | {r['self_sec']} | {r['cum_sec']} | {r['pct']}% | `{r['where']}` |")
+
+    if "memory" in data:
+        mem = data["memory"]
+        out += ["", f"## Memory Profile (`{mem['tool']}`)"]
+        parts = [f"OS Peak RSS: **{mem['peak_rss_mb']} MB**" if mem.get("peak_rss_mb") is not None else "OS Peak RSS: n/a"]
+        if mem.get("peak_py_mb") is not None:
+            parts.append(f"Peak Python heap (`tracemalloc`): **{mem['peak_py_mb']} MB** (retained at exit: {mem.get('retained_py_mb', 0)} MB)")
+        if mem.get("cuda_peak_mb") is not None:
+            parts.append(f"Peak CUDA allocated: **{mem['cuda_peak_mb']} MB**")
+        out.append("- " + " | ".join(parts))
+        if mem.get("svg"):
+            svgs.append(mem["svg"])
+            out.append(f"- Allocation flame graph SVG: `{mem['svg']}`")
+        for note in mem.get("notes", []):
+            out.append(f"- **NOTE**: {note}")
+        if mem.get("top_allocations"):
+            out += ["", "### Top retained Python allocation sites", "",
+                    "| Location | Retained (MB) | Blocks |", "|---|---|---|"]
+            for a in mem["top_allocations"][:10]:
+                out.append(f"| `{a['where']}` | {a['mb']} | {a['blocks']} |")
+
+    if "imports" in data:
+        imp = data["imports"]
+        out += ["", f"## Startup Import Profile (`{imp['tool']}`, total `{imp['total_ms']} ms`)"]
+        if imp.get("svg"):
+            svgs.append(imp["svg"])
+            out.append(f"- Import flame graph SVG: `{imp['svg']}`")
+        out += ["", "| Module | cumulative (ms) | self (ms) |", "|---|---|---|"]
+        for r in imp.get("top_cumulative", [])[:10]:
+            out.append(f"| `{r['module']}` | {r['cum_ms']} | {r['self_ms']} |")
+
+    if svgs:
+        out += ["", "## Embed in `.clean-arch/perf.md` (viewable in IDE & `clean_arch_review`)"]
+        for s in svgs:
+            rel_from_clean = s.removeprefix(".clean-arch/")
+            out.append(f"- `![{Path(s).stem}]({rel_from_clean})`")
+
+    return "\n".join(out) + "\n"
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    if not re.fullmatch(r"[\w.\-]+", args.name):
+        sys.exit("profile name may only contain letters, digits, '.', '_' and '-'")
+    if not args.target and not args.cmd:
+        sys.exit("profile requires --target (e.g. '-m pkg.job') or --cmd")
+    run_root = (root / args.cwd).resolve() if args.cwd else root
+    store = root / ".clean-arch" / "perf"
+    store.mkdir(parents=True, exist_ok=True)
+    try:
+        py_exe, py_argv, shell_cmd = parse_target_args(args.python, args.target, args.cmd)
+        report: dict = {"name": args.name, "mode": args.mode, "command": shell_cmd, "created": date.today().isoformat()}
+        if args.mode in ("all", "cpu"):
+            report["cpu"] = profile_cpu(run_root, store, args.name, py_exe, py_argv, shell_cmd, args.timeout)
+            # Normalise SVG path relative to repo root if cwd differed
+            if report["cpu"].get("svg"):
+                report["cpu"]["svg"] = (run_root / report["cpu"]["svg"]).resolve().relative_to(root).as_posix()
+        if args.mode in ("all", "memory"):
+            report["memory"] = profile_memory(run_root, store, args.name, py_exe, py_argv, shell_cmd, args.timeout)
+            if report["memory"].get("svg"):
+                report["memory"]["svg"] = (run_root / report["memory"]["svg"]).resolve().relative_to(root).as_posix()
+        if args.mode == "import":
+            report["imports"] = profile_imports(run_root, store, args.name, py_exe, py_argv, args.timeout)
+            if report["imports"].get("svg"):
+                report["imports"]["svg"] = (run_root / report["imports"]["svg"]).resolve().relative_to(root).as_posix()
+    except (ValueError, RuntimeError) as exc:
+        sys.exit(str(exc))
+
+    json_file = store / f"profile-{args.name}.json"
+    json_file.write_text(json.dumps(report, indent=1), encoding="utf-8")
+    if args.format == "json":
+        print(json.dumps(report, indent=1))
+    else:
+        sys.stdout.write(render_profile(args.name, report))
+        sys.stdout.write(f"\nSaved to .clean-arch/perf/profile-{args.name}.json\n")
     return 0
 
 
@@ -755,11 +923,21 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--limit", type=int, default=8, help="locations shown per rule")
     scan.add_argument("--format", choices=["md", "json"], default="md")
 
-    env = sub.add_parser("env", help="versions and backends of performance-relevant libraries")
+    env = sub.add_parser("env", help="versions, backends and installed profilers in a Python environment")
     env.add_argument("--python", default=sys.executable, help="interpreter of the project environment")
     env.add_argument("--format", choices=["md", "json"], default="md")
 
-    bench = sub.add_parser("bench", help="repeat a command, report median and spread, compare with a baseline")
+    prof = sub.add_parser("profile", help="run CPU/memory/import profilers and render self-contained flame-graph SVGs")
+    prof.add_argument("name")
+    prof.add_argument("--mode", choices=["all", "cpu", "memory", "import"], default="all")
+    prof.add_argument("--python", default=sys.executable, help="interpreter of the project environment")
+    prof.add_argument("--target", help="arguments passed to Python, e.g. '-m pkg.job --in a.json' or 'run.py'")
+    prof.add_argument("--cmd", help="alternative full command to profile")
+    prof.add_argument("--cwd", help="working directory relative to the root")
+    prof.add_argument("--timeout", type=float, default=1800, help="seconds per profile run")
+    prof.add_argument("--format", choices=["md", "json"], default="md")
+
+    bench = sub.add_parser("bench", help="repeat a command, report median/spread + Peak RSS, compare with a baseline")
     bench.add_argument("name")
     bench.add_argument("--cmd", required=True, help="shell command to time")
     bench.add_argument("--runs", type=int, default=7)
@@ -791,6 +969,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             sys.stdout.write(render_env(data))
         return 0
+    if args.command == "profile":
+        return cmd_profile(args)
     if args.command == "bench":
         return cmd_bench(args)
     return cmd_lessons(args)

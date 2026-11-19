@@ -117,6 +117,10 @@ describe("opencode 2.x setup()", () => {
       const scan = await perf.execute({}, {})
       expect(scan.content).toContain("PERF-NP-ADD-AT")
       await expect(perf.execute({ action: "bench", name: "x" }, {})).rejects.toThrow("needs name and command")
+      await expect(perf.execute({ action: "profile", name: "p1" }, {})).rejects.toThrow("needs name and either target")
+      const prof = await perf.execute({ action: "profile", name: "imp", mode: "import", target: '-c "import json"' }, {})
+      expect(prof.content).toContain("profile-imp-import.svg")
+      expect(existsSync(path.join(dir, ".clean-arch/perf/profile-imp-import.svg"))).toBe(true)
       const entry = [
         "## numpy: bincount replaces add.at",
         "- status: verified",
@@ -156,7 +160,8 @@ describe("opencode 1.x server()", () => {
     const perfSchema = tool.schema.object(hooks.tool.clean_arch_perf.args)
     expect(perfSchema.safeParse({}).success).toBe(true)
     expect(perfSchema.safeParse({ action: "bench", name: "a", command: "x", runs: 5 }).success).toBe(true)
-    expect(perfSchema.safeParse({ action: "profile" }).success).toBe(false)
+    expect(perfSchema.safeParse({ action: "profile", name: "p", mode: "all", target: "-m pkg" }).success).toBe(true)
+    expect(perfSchema.safeParse({ action: "bogus" }).success).toBe(false)
     const leftovers = hooks.tool.clean_arch_leftovers
     const schema = tool.schema.object(leftovers.args)
     expect(schema.safeParse({ since: "HEAD", skip: ["todo"] }).success).toBe(true)

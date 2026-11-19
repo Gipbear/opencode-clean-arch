@@ -441,14 +441,58 @@ class PerfCheckTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["python"].split(".")[0], str(sys.version_info[0]))
 
     def test_bench_saves_and_compares(self):
-        (self.repo / "m.py").write_text("import sys\nprint('PERF_METRIC inner=' + sys.argv[1])\n")
+        (self.repo / "m.py").write_text("import sys\nprint('PERF_METRIC inner=' + sys.argv[1])\n", encoding="utf-8")
         base = self.perf("bench", "base", "--cmd", f'"{sys.executable}" m.py 0.5', "--runs", "3", "--warmup", "0")
         self.assertEqual(base.returncode, 0, base.stderr)
-        self.assertTrue((self.repo / ".clean-arch" / "perf" / "bench-base.json").exists())
+        base_json = json.loads((self.repo / ".clean-arch" / "perf" / "bench-base.json").read_text(encoding="utf-8"))
+        self.assertIn("peak_mb", base_json["metrics"])
+        self.assertTrue(all(v > 0 for v in base_json["metrics"]["peak_mb"]))
         cand = self.perf("bench", "cand", "--cmd", f'"{sys.executable}" m.py 0.1', "--runs", "3", "--warmup", "0",
                          "--compare", "base")
         self.assertEqual(cand.returncode, 0, cand.stderr)
         self.assertRegex(cand.stdout, r"inner \|[^\n]*faster")
+        comp_svg = self.repo / ".clean-arch" / "perf" / "bench-cand-vs-base.svg"
+        self.assertTrue(comp_svg.is_file())
+        svg_text = comp_svg.read_text(encoding="utf-8")
+        self.assertTrue(svg_text.startswith("<svg"))
+        self.assertIn("faster", svg_text)
+        self.assertNotIn("var(", svg_text)
+        self.assertNotIn("<script", svg_text)
+
+    def test_profile_cpu_memory_and_import_render_svgs(self):
+        (self.repo / "work.py").write_text(
+            "RETAINED = []\n\n"
+            "def heavy_loop():\n"
+            "    total = 0\n"
+            "    for i in range(40000):\n"
+            "        total += (i * 3) % 7\n"
+            "    RETAINED.extend(bytearray(2048) for _ in range(64))\n"
+            "    return total\n\n"
+            "if __name__ == '__main__':\n"
+            "    heavy_loop()\n",
+            encoding="utf-8",
+        )
+        prof = self.perf("profile", "work1", "--mode", "all", "--target", "work.py")
+        self.assertEqual(prof.returncode, 0, prof.stderr)
+        self.assertIn("CPU / Wall-Clock Profile", prof.stdout)
+        self.assertIn("Memory Profile", prof.stdout)
+        self.assertIn("OS Peak RSS:", prof.stdout)
+        cpu_svg = self.repo / ".clean-arch" / "perf" / "profile-work1-cpu.svg"
+        mem_svg = self.repo / ".clean-arch" / "perf" / "profile-work1-memory.svg"
+        self.assertTrue(cpu_svg.is_file())
+        self.assertTrue(mem_svg.is_file())
+        for path in (cpu_svg, mem_svg):
+            txt = path.read_text(encoding="utf-8")
+            self.assertTrue(txt.startswith("<svg"))
+            self.assertNotIn("var(", txt)
+            self.assertNotIn("<script", txt)
+        self.assertIn("heavy_loop", cpu_svg.read_text(encoding="utf-8"))
+
+        imp = self.perf("profile", "imp1", "--mode", "import", "--target", '-c "import json, urllib.parse"')
+        self.assertEqual(imp.returncode, 0, imp.stderr)
+        imp_svg = self.repo / ".clean-arch" / "perf" / "profile-imp1-import.svg"
+        self.assertTrue(imp_svg.is_file())
+        self.assertIn("urllib", imp_svg.read_text(encoding="utf-8"))
 
     def test_bench_rejects_bad_arguments(self):
         self.assertNotEqual(self.perf("bench", "x", "--cmd", "echo hi", "--runs", "1").returncode, 0)

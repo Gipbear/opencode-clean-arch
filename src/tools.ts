@@ -142,26 +142,30 @@ const render: ToolSpec = {
 const perf: ToolSpec = {
   name: "clean_arch_perf",
   description:
-    "Performance helpers for the perf-tune skill. action=scan (default): static candidates for known slow patterns " +
-    "(per-item pyproj Transformer or shapely Point creation, iterrows, np.add.at, array growth in loops, GPU syncs in " +
-    "loops, ...), pattern matches that need a profile to confirm. action=env: versions and backends of the " +
-    "performance-relevant libraries in a Python environment (protobuf backend, laspy LAZ decoder, OpenMP runtimes, " +
-    "thread settings); pass python=<project interpreter>. action=bench: run a shell command repeatedly, report median " +
-    "and spread, save it as .clean-arch/perf/bench-<name>.json, and compare with a saved baseline via compare=<name>; " +
-    "the command may print lines 'PERF_METRIC name=value' for in-process timings. action=lessons: search the persistent " +
-    "store of measured optimization lessons with query, or add one verified lesson with entry.",
+    "Performance & memory profiling, benchmarking and SVG visualization for the perf-tune skill. action=scan (default): " +
+    "static candidates for known slow patterns (per-item pyproj Transformer or shapely Point creation, iterrows, " +
+    "np.add.at, array growth in loops, GPU syncs in loops, ...), leads that need a profile to confirm. action=env: " +
+    "versions, backends and installed open-source profilers (py-spy, pyinstrument, memray, scalene) in a Python " +
+    "environment; pass python=<project interpreter>. action=profile: run CPU, memory (OS Peak RSS + Python/native heap) " +
+    "and/or import-time profilers — automatically using py-spy, pyinstrument or memray when installed and falling back " +
+    "to stdlib cProfile, tracemalloc and -X importtime — and write self-contained flame-graph SVGs under .clean-arch/perf/. " +
+    "action=bench: run a shell command repeatedly, measure wall time + OS Peak RSS (peak_mb) + 'PERF_METRIC name=value' " +
+    "lines, save .clean-arch/perf/bench-<name>.json, and render a comparison SVG when compare=<baseline> is given. " +
+    "action=lessons: search or add verified optimization lessons.",
   params: {
-    action: { type: "string", enum: ["scan", "env", "bench", "lessons"], optional: true, description: "default scan" },
+    action: { type: "string", enum: ["scan", "env", "profile", "bench", "lessons"], optional: true, description: "default scan" },
     include: { type: "string[]", optional: true, description: "action=scan: only scan these paths (relative to the project)" },
     include_tests: { type: "boolean", optional: true, description: "action=scan: also scan test files" },
     limit: { type: "number", optional: true, description: "action=scan: locations shown per rule (default 8); action=lessons: max entries (default 8)" },
-    python: { type: "string", optional: true, description: "action=env: interpreter of the project environment, e.g. .venv/bin/python (default: the plugin's Python)" },
-    name: { type: "string", optional: true, description: "action=bench: name of this benchmark (letters, digits, . _ -)" },
-    command: { type: "string", optional: true, description: "action=bench: shell command to time, run from the project root or cwd" },
+    python: { type: "string", optional: true, description: "action=env|profile: interpreter of the project environment, e.g. .venv/bin/python" },
+    name: { type: "string", optional: true, description: "action=profile|bench: short name for output files (letters, digits, . _ -)" },
+    mode: { type: "string", enum: ["all", "cpu", "memory", "import"], optional: true, description: "action=profile: what to profile (default all = CPU + memory; use import for startup)" },
+    target: { type: "string", optional: true, description: "action=profile: arguments passed to python, e.g. '-m pkg.job --in a.json' or 'scripts/run.py'" },
+    command: { type: "string", optional: true, description: "action=bench|profile: shell command to run from project root or cwd" },
     runs: { type: "number", optional: true, description: "action=bench: measured runs (default 7, minimum 3)" },
     warmup: { type: "number", optional: true, description: "action=bench: discarded warm-up runs (default 1)" },
-    cwd: { type: "string", optional: true, description: "action=bench: working directory relative to the project" },
-    compare: { type: "string", optional: true, description: "action=bench: name of a saved benchmark to compare with" },
+    cwd: { type: "string", optional: true, description: "action=bench|profile: working directory relative to the project" },
+    compare: { type: "string", optional: true, description: "action=bench: name of a saved benchmark to compare with (also renders a comparison SVG)" },
     threshold: { type: "number", optional: true, description: "action=bench: smallest relative change that counts, default 0.05" },
     query: { type: "string", optional: true, description: "action=lessons: words to search for, e.g. 'shapely contains point'; omit to list the index" },
     entry: { type: "string", optional: true, description: "action=lessons: one Markdown entry to add ('## title' then '- key: value' lines); only for verified, measured results" },
@@ -176,6 +180,17 @@ const perf: ToolSpec = {
       if (args.limit) argv.push("--limit", String(args.limit))
     } else if (action === "env") {
       if (args.python) argv.push("--python", path.resolve(env.directory, args.python))
+    } else if (action === "profile") {
+      if (!args.name || (!args.target && !args.command)) {
+        throw new Error("action=profile needs name and either target (e.g. '-m pkg.job') or command")
+      }
+      argv.push(args.name)
+      if (args.mode) argv.push("--mode", args.mode)
+      if (args.python) argv.push("--python", path.resolve(env.directory, args.python))
+      if (args.target) argv.push("--target", args.target)
+      if (args.command) argv.push("--cmd", args.command)
+      if (args.cwd) argv.push("--cwd", args.cwd)
+      timeoutMs = 30 * 60_000
     } else if (action === "bench") {
       if (!args.name || !args.command) throw new Error("action=bench needs name and command")
       argv.push(args.name, "--cmd", args.command)

@@ -24,7 +24,7 @@
 | `comment-hygiene` | 注释只写“为什么”和约束；删除改动叙述、历史、复述代码、注释掉的代码 |
 | `clean-finish` | 完成门禁：遗留扫描、删除清单核对、`rules.toml` 三层与禁用依赖检查、目标蓝图与零臃肿核查、测试、diff 卫生 |
 | `arch-map` | 生成突出主干流程与核心数据模型的 4+1 架构文档（≤80 行/页、≤20 节点/图）+ 面向 AI 的模块索引、术语表、分层规则 |
-| `perf-tune` | 以测量为准的性能优化：定指标和工作负载 → 基线 → 剖析定位瓶颈 → 逐项修改并复测，收益超过噪声才保留；覆盖算法与数据结构、缓存、向量化、I/O 与并发、PyTorch、编译加速、启动时间。独立使用，没有对应命令 |
+| `perf-tune` | 以测量与火焰图为准的性能与内存优化：环境与开源剖析器探测 → 基线（耗时 + 真实物理内存峰值 Peak RSS） → 自动调用 `py-spy`/`pyinstrument`/`memray`（或标准库保底）生成自包含 **CPU/内存/导入火焰图 SVG** → 逐项修改并生成**前后对比图 SVG**，收益超过噪声才保留 |
 
 | 命令 | 说明 |
 |---|---|
@@ -40,7 +40,7 @@
 | `clean_arch_leftovers` | 遗留扫描，支持 `since=<git ref>` 只看本次改动 |
 | `clean_arch_render` | `*.mmd` → 自包含 SVG（颜色写死、无外部字体），适合代码托管平台直接预览；对渲染器不支持的写法和过宽的图给出警告 |
 | `clean_arch_review` | 评审页面，分两步：`open` 启动页面并立即返回链接，`wait` 阻塞等待结论并返回结构化批注 |
-| `clean_arch_perf` | 性能调优辅助（`perf-tune` 用），四个动作：`scan` 静态扫描已知慢模式（循环里建 Transformer/Point、`iterrows`、`np.add.at`、循环里同步 GPU 等），只是线索；`env` 报告项目解释器里影响性能的版本和后端（protobuf、LAZ 解码器、OpenMP、线程数）；`bench` 重复运行命令，给出中位数和波动，并与已保存的基线比较；`lessons` 检索或追加已验证的优化经验 |
+| `clean_arch_perf` | 性能与内存调优辅助（`perf-tune` 用），五个动作：`env` 探测解释器加速后端与已安装的开源剖析器（`py-spy`、`pyinstrument`、`memray`、`scalene`）；`profile` 自动调度开源剖析器（未安装时退回标准库 `cProfile`/`tracemalloc`/`-X importtime`）采集 CPU、内存与启动耗时并生成**自包含火焰图 SVG**；`bench` 多轮测量墙钟耗时与**跨平台真实物理内存峰值（`peak_mb`）**，对比基线时自动生成**前后对比图 SVG**；`scan` 静态扫描已知慢模式线索；`lessons` 检索或追加已验证的优化经验 |
 
 ## 安装
 

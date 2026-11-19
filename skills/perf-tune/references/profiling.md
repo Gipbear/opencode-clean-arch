@@ -1,94 +1,66 @@
-# Profiling and benchmarking
+# Profiling, Memory Analysis and Visual Flame Graphs
 
-Profilers locate cost; benchmarks prove a change helped. Use both, and use the tool that
-answers the question you actually have.
+Profilers locate where time and memory go; unprofiled benchmarks prove a change helped. Prefer
+`clean_arch_perf` (`env`, `profile`, `bench`) first — it automatically uses installed open-source
+profilers and renders **self-contained `.svg` flame graphs and comparison charts** that display in
+IDEs, `clean_arch_review`, GitHub and CodeHub without external viewers.
 
-## Which tool for which question
+## Automated tool chain in `clean_arch_perf`
 
-| Question | Tool | Notes |
+| Need | `clean_arch_perf` call | Underlying engine (best available → stdlib fallback) | Visual output (`.clean-arch/perf/`) |
+|---|---|---|---|
+| CPU & wall-clock call paths | `action="profile", mode="cpu"` (or `"all"`) | `py-spy` (250 Hz native-aware) → `pyinstrument` (wall-clock tree) → `cProfile` (`pstats` DAG) | `profile-<name>-cpu.svg` (icicle flame graph) |
+| Peak physical RAM + Python heap | `action="profile", mode="memory"` (or `"all"`) | OS Peak RSS (`ru_maxrss` / Win32 Job Object) + `memray` (POSIX) + `tracemalloc` (25-frame stacks) + `torch.cuda` | `profile-<name>-memory.svg` (allocation flame graph) |
+| CLI / package startup latency | `action="profile", mode="import"` | `python -X importtime` post-order tree builder | `profile-<name>-import.svg` (import waterfall/flame SVG) |
+| Before/after speed & Peak RSS | `action="bench", compare="baseline"` | Unprofiled subprocess runner with warm-up, medians, IQR spread & OS Peak RSS (`peak_mb`) | `bench-<cand>-vs-<base>.svg` (bar + whisker chart) |
+
+## When to use additional open-source profilers directly
+
+When the automated SVG points to a dense C/native hotspot or an `OS Peak RSS >> traced Python heap`
+gap, reach for these lightweight open-source tools (probed by `clean_arch_perf env`):
+
+| Question | Open-source tool | Install & command |
 |---|---|---|
-| Which functions use CPU, with exact call counts? | `cProfile` + `pstats` | Standard library. Tracing adds overhead and distorts call-heavy code. |
-| Where does wall-clock time go in a request or script, including waiting? | `pyinstrument` | Sampling call tree, readable. Elapsed time is not CPU time. |
-| What is a running process doing, without restarting it? | `py-spy` | External sampler. May need permissions to attach. |
-| Which lines in a known hot function are slow? | `line_profiler` (`kernprof`) | Needs a temporary `@profile` decorator; remove it afterwards. |
-| Python vs native vs memory vs copying, per line | Scalene | The command line changed across versions; check `scalene --help`. |
-| Who allocates memory, what is retained? | Memray | Linux and macOS only. |
-| Python-level allocations only | `tracemalloc` | Misses native, GPU and mmap memory. |
-| Did a small snippet get faster? | `timeit` | Per-snippet only. |
-| Is a difference reproducible across processes? | `pyperf` | Many processes, warm-up, statistics. |
-| Why is startup slow? | `python -X importtime` | Shows cumulative import time per module. |
-| PyTorch operators and GPU kernels | `torch.profiler` | Also check GPU utilisation outside Python (`nvidia-smi`). |
+| Attach to an already-running server/worker without restarting, or inspect C/C++ extension frames (`--native`) | **`py-spy`** (Rust, Windows/Linux/macOS) | `pip install py-spy`<br>`py-spy record --native -o .clean-arch/perf/native-flame.svg --pid <pid>` |
+|Readable wall-clock tree in terminal including async / I/O waits | **`pyinstrument`** (pure Python + C ext, cross-platform) | `pip install pyinstrument`<br>`pyinstrument -m pkg.module --args` |
+| Native C/C++/Rust memory high-watermark, temporary churn & leaks (Linux/macOS) | **`memray`** (Bloomberg, Linux/macOS) | `pip install memray`<br>`memray run -o .clean-arch/perf/mem.bin -m pkg.module && memray summary .clean-arch/perf/mem.bin` |
+| Per-line split of **Python CPU vs Native C CPU vs RAM MB vs Python↔C Copy MB/s** (ideal for NumPy/Shapely/OpenCV copies) | **`scalene`** (Windows/Linux/macOS) | `pip install scalene`<br>`scalene --cli --reduced-profile script.py` |
+| Exact line-by-line timings inside one known hot Python function | **`line_profiler`** (`kernprof`) | `pip install line_profiler` (add `@profile` temporarily, remove before finishing)<br>`kernprof -l -v script.py` |
+| PyTorch CPU/CUDA operator timeline & kernel gaps | **`torch.profiler`** | Built into PyTorch; export Chrome trace `.clean-arch/perf/trace.json` and check `nvidia-smi` |
 
-Python 3.15 adds a standard `profiling.sampling` sampler and `profiling.tracing` (cProfile).
+## Reading the generated SVG flame graphs
 
-## Commands
-
-```bash
-# whole program, exact counts; inspect with: python -m pstats out.prof
-python -m cProfile -o .clean-arch/perf/out.prof -m pkg.module --args
-
-# sampled call tree, includes time spent waiting
-pyinstrument -r html -m pkg.module
-
-# running process; "record" writes a flame graph, "dump" prints current stacks
-py-spy top --pid <pid>
-py-spy record -o .clean-arch/perf/flame.svg --pid <pid>
-py-spy record -o .clean-arch/perf/flame.svg -- python -m pkg.module
-
-# lines in a hot function (add @profile temporarily)
-kernprof -l -v script.py
-
-# memory
-python -X tracemalloc=25 -m pkg.module
-memray run -o .clean-arch/perf/mem.bin script.py && memray flamegraph .clean-arch/perf/mem.bin
-
-# snippets and imports
-python -m timeit -s "setup" "statement"
-python -X importtime -c "import pkg" 2> .clean-arch/perf/imports.txt
-```
-
-Add `--native` to `py-spy` when the time may be inside C extensions. Profile with the same
-Python and package versions that production uses.
-
-## Reading a profile
-
-- Sort by cumulative time to find the call path, by own time (tottime) to find the leaf that
-  burns CPU.
-- A function with huge call counts and tiny per-call cost is a call-count problem: hoist, batch
-  or vectorize, not micro-tune.
-- Time inside `numpy`/`torch`/`pandas` frames called from a Python loop means many small calls;
-  time inside one big native call means the library is already doing the work.
-- Mostly idle or `select`/`recv`/`sleep` frames mean waiting: use concurrency or batching, not a
-  faster algorithm.
-- Profilers add overhead. Always compare against the unprofiled baseline, and re-measure without
-  the profiler after each change.
+- **Width = cost.** In `profile-*-cpu.svg`, horizontal bar width is proportional to total time on
+  stack; look for **wide plateaus** near the bottom of a call chain, not deep thin needles.
+- **Colour = layer:**
+  - **Amber / coral (`Project code`)**: your repository's own `.py` files — algorithm, loop or
+    data-structure fixes apply directly.
+  - **Slate blue (`Library / stdlib`)**: third-party Python frames — check how you call the
+    library (batch vs per-item, object reuse in `references/libraries.md`).
+  - **Teal (`C / native`)**: C extensions / built-ins — many tiny calls under an amber parent mean
+    a Python loop calling C per item; one wide teal block means a single bulk native call.
+- **Memory gap (`OS Peak RSS` vs `tracemalloc` Python heap):**
+  - `tracemalloc` only sees Python objects (`list`, `dict`, instances). NumPy arrays, Shapely
+    GEOS geometries, `laspy` point buffers, OpenCV `Mat` and PyTorch tensors allocate directly via
+    C/C++/Rust allocators and show up in **OS Peak RSS (`peak_mb`)**, not `tracemalloc`.
+  - When `OS Peak RSS` is high while `tracemalloc` is tiny, look for large array temporaries
+    (`a * b + c`), non-contiguous copies (`astype`, `np.append` in loops), whole-file reads
+    (`laspy.read`), or `N x M` distance matrices (`torch.cdist`, `ot.dist`).
 
 ## Benchmarking without fooling yourself
 
-`clean_arch_perf` `bench` implements the warm-up, repeat, median and spread, and baseline
-comparison below for any shell command. Wall time includes interpreter start-up and imports; for
-the part you are changing, have the workload print `PERF_METRIC name=seconds` lines (time only the
-region of interest with `time.perf_counter()`, after loading and warm-up) and `bench` reports and
-compares each metric separately.
+`clean_arch_perf bench` handles warm-up, repeated runs, median/spread noise bands, Peak RSS
+tracking and baseline comparison charts. Keep these rules in mind:
 
-- **Same conditions every time**: same machine, input, Python version, power state; nothing else
-  heavy running. Do not compare numbers from different machines or Python versions.
-- **Warm up**: discard the first run (imports, caches, JIT, `torch.compile`, CUDA context). Report
-  cold start separately when it matters.
-- **Repeat and use robust statistics**: at least 5 runs; report median and spread (min or IQR),
-  not a single run and not the mean.
-- **Measure noise first**: run the unchanged code several times. A "gain" inside that band is noise.
-- **Interleave** baseline and candidate on a noisy machine, so drift hits both equally.
-- **Control the garbage collector** in micro-benchmarks (`gc.collect()` before, `gc.disable()`
-  during), so a collection does not land in only some runs.
-- **Time the right thing**: do not include setup, fixtures or I/O you are not changing. Use the
-  result (assert on it) so nothing is optimized away.
-- **Beware caches**: a memoized function measured twice measures the cache hit. Clear it between
-  runs when the cold path matters.
-- **GPU work is asynchronous**: call `torch.cuda.synchronize()` before reading the clock, or use
-  `torch.utils.benchmark`.
-- **Concurrency needs a realistic load**: a benchmark with one request says nothing about contention
-  and pool limits.
-- Keep benchmarks out of the normal test run unless the user asks for a regression gate. A CI
-  gate needs a threshold above measured noise, medians, and baseline and candidate run in the same
-  job; otherwise it fails on noise and people stop trusting it.
+- **In-process sub-timings (`PERF_METRIC`)**: `wall` includes Python startup and imports. When
+  optimizing an inner stage, print `PERF_METRIC stage_name=<seconds>` (measured with
+  `time.perf_counter()` after loading/warm-up) or `PERF_METRIC gpu_peak_mb=<mb>`; `bench` tracks
+  and plots every metric alongside `wall` and `peak_mb`.
+- **Same conditions every time**: same machine, power state, Python interpreter and thread env
+  vars (`OMP_NUM_THREADS`, etc.).
+- **Noise first**: if `spread` exceeds ~10%, quiet background load, pin input seeds, or increase
+  `runs` before comparing.
+- **GPU is asynchronous**: call `torch.cuda.synchronize()` before stopping timers!
+- **Never benchmark with a profiler attached**: tracing (`cProfile`, `tracemalloc`, `Scalene`)
+  adds 1.3x–5x overhead and skews Python-heavy code relative to C code. Profile in Phase 2 to
+  find the bottleneck; always verify in Phase 4 with unprofiled `bench`.
