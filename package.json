@@ -1,6 +1,6 @@
 {
   "name": "opencode-clean-arch",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "opencode plugin: skills and tools that turn agent-grown Python code into a clean, documented architecture (diagnose, reviewed plan, restructure, simplify, leftover gate, 4+1 docs with SVG diagrams).",
   "type": "module",
   "main": "./src/index.ts",
