@@ -38,6 +38,15 @@ export const COMMANDS: CommandSpec[] = [
       "(if empty, use the base commit in .clean-arch/baseline.md, or the merge base with the main branch). Fix what fails.",
   },
   {
+    name: "perf-tune",
+    description: "以测量与火焰图为准的性能与内存调优：基线 → CPU/内存剖析 SVG → 评审方案 → 逐步优化与对比图",
+    template:
+      "Load the `perf-tune` skill and run its measurement-driven workflow (env & baseline -> CPU/memory flame-graph SVGs -> " +
+      "reviewed plan in .clean-arch/perf.md -> one-by-one optimization with comparison SVGs -> clean-finish gate). " +
+      "Target / goal: $ARGUMENTS (if empty, inspect the repository entry points or ask for the target workload). " +
+      "Do not modify source code before baseline profiling and plan approval.",
+  },
+  {
     name: "arch-review",
     description: "在浏览器中评审一个 Markdown 文档（方案、设计）",
     template:

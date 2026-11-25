@@ -76,7 +76,7 @@ describe("opencode 2.x setup()", () => {
     const { added } = await setup(fixtureCopy())
     expect(added.skill).toHaveLength(9)
     expect(added.skill[0].path.startsWith(SKILLS_DIR)).toBe(true)
-    expect(added.command.map((c) => c.name)).toEqual(["clean-arch", "arch-diagnose", "arch-map", "clean-finish", "arch-review"])
+    expect(added.command.map((c) => c.name)).toEqual(["clean-arch", "arch-diagnose", "arch-map", "clean-finish", "perf-tune", "arch-review"])
     expect(added.tool.map((t) => t.name)).toEqual(["clean_arch_facts", "clean_arch_leftovers", "clean_arch_render", "clean_arch_review", "clean_arch_perf"])
     const review = added.tool.find((t) => t.name === "clean_arch_review")
     expect(review.input.required).toEqual(["path"])
@@ -90,6 +90,11 @@ describe("opencode 2.x setup()", () => {
     expect(prompts[0].sessionID).toBe("s1")
     expect(prompts[0].delivery).toBe("steer")
     expect(prompts[0].text).toContain("Scope: shop/services")
+
+    const perfCmd = added.command.find((c) => c.name === "perf-tune")
+    await perfCmd.execute({ sessionID: "s1", prompt: { text: "-m shop.cli --input big.csv" } })
+    expect(prompts[1].text).toContain("Load the `perf-tune` skill")
+    expect(prompts[1].text).toContain("Target / goal: -m shop.cli --input big.csv")
   })
 
   test("tools run the analysis scripts in the plugin location", async () => {

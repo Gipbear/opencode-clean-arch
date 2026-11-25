@@ -1,7 +1,7 @@
 # AGENTS.md
 
 opencode 插件 `opencode-clean-arch`：把“诊断 → 方案评审 → 执行重构 → 收尾门禁 → 架构文档”做成 9 个
-skill、5 个命令和 5 个工具，同一个包同时支持 opencode V1（1.x，`@opencode-ai/plugin`）和 V2（2.x，`@opencode/cli`）。
+skill、6 个命令和 5 个工具，同一个包同时支持 opencode V1（1.x，`@opencode-ai/plugin`）和 V2（2.x，`@opencode/cli`）。
 用户说明见 `README.md`（中文）。开发过程和未完成事项见本地文件 `docs/HANDOFF.md`（不入库）。
 
 ## 与用户约定的原则
@@ -20,7 +20,7 @@ skill、5 个命令和 5 个工具，同一个包同时支持 opencode V1（1.x�
 |---|---|
 | `src/index.ts` | 插件入口：默认导出 `{ id, setup(ctx) /* V2 */, server(input) /* V1 */ }` |
 | `src/tools.ts` | 5 个工具的统一定义（`ToolSpec`），再转成 V1 的 zod 形状或 V2 的 JSON Schema |
-| `src/skills.ts`、`src/commands.ts` | 读取 `skills/*/SKILL.md`；5 个斜杠命令的模板 |
+| `src/skills.ts`、`src/commands.ts` | 读取 `skills/*/SKILL.md`；6 个斜杠命令的模板 |
 | `src/python.ts` | 调用 `skills/clean-arch/scripts/*.py`（`CLEAN_ARCH_PYTHON` 可指定解释器） |
 | `src/render.ts` | Mermaid → 自包含 SVG（beautiful-mermaid，展开 CSS 变量和 color-mix），以及渲染警告 |
 | `src/review/` | 检视页面：node:http 服务、页面（中文 UI）、Markdown 渲染、行级 diff、历史轮次 |
