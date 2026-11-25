@@ -522,6 +522,47 @@ class PerfCheckTest(unittest.TestCase):
         self.assertNotEqual(self.perf("lessons", "--entry", unix_path).returncode, 0)
         self.assertFalse(self.store.exists())
 
+    def test_lessons_entry_file_and_metric_units_and_disjoint_verdict(self):
+        entry_file = self.repo / "lesson.md"
+        entry_file.write_text(GOOD_LESSON.replace("\\n", "\n"), encoding="utf-8")
+        res = self.perf("lessons", "--entry-file", str(entry_file))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue(self.store.is_file())
+
+        # Verify infer_metric_unit + disjoint range detection + count rendering in bench SVG
+        sys.path.insert(0, str(SCRIPTS))
+        import perf_check as pc
+        import perf_viz as pv
+
+        self.assertEqual(pv.infer_metric_unit("parsed_lines"), ("", "count"))
+        self.assertEqual(pv.infer_metric_unit("inline_parse_s"), ("s", "time"))
+        self.assertEqual(pv.infer_metric_unit("peak_mb"), ("MB", "memory"))
+        baseline = {"metrics": {"peak_mb": [151.0, 154.0, 155.0], "parsed_lines": [30000.0, 30000.0, 30000.0]}}
+        cand_stats = {
+            "peak_mb": pc.stats([158.0, 158.5, 160.0]),
+            "parsed_lines": pc.stats([30000.0, 30000.0, 30000.0]),
+        }
+        rows = pc.compute_comparisons(cand_stats, baseline, 0.05)
+        by_name = {r["metric"]: r for r in rows}
+        self.assertEqual(by_name["peak_mb"]["verdict"], "HIGHER")
+        self.assertEqual(by_name["parsed_lines"]["verdict"], "within noise")
+        svg = pv.render_bench_svg("Compare", rows, "base", "cand")
+        self.assertIn("30000 -&gt; 30000", svg)
+        self.assertNotIn("30000.00s", svg)
+
+    def test_single_package_mermaid_falls_back_to_module_edges(self):
+        pkg = self.repo / "src" / "singlepkg"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "a.py").write_text("from singlepkg import b\n", encoding="utf-8")
+        (pkg / "b.py").write_text("x = 1\n", encoding="utf-8")
+        out = subprocess.run(
+            [sys.executable, str(SCRIPTS / "arch_facts.py"), "--root", str(self.repo), "mermaid", "--view", "packages"],
+            capture_output=True, text=True, encoding="utf-8", check=True,
+        ).stdout
+        self.assertIn("singlepkg.a", out)
+        self.assertIn("singlepkg.b", out)
+
 
 if __name__ == "__main__":
     unittest.main()

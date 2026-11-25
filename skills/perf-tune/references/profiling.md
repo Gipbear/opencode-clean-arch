@@ -39,6 +39,12 @@ gap, reach for these lightweight open-source tools (probed by `clean_arch_perf e
     library (batch vs per-item, object reuse in `references/libraries.md`).
   - **Teal (`C / native`)**: C extensions / built-ins — many tiny calls under an amber parent mean
     a Python loop calling C per item; one wide teal block means a single bulk native call.
+- **Child worker processes (`multiprocessing` / `ProcessPoolExecutor` / `subprocess`):**
+  - In-process samplers (`pyinstrument`, `cProfile`) only observe the main process; child worker
+    CPU shows up in the parent flame graph as a wide `lock.acquire` / `threading.wait` /
+    `IMapIterator.next` plateau! Do **not** misread that as "CPU work is cheap" — either install
+    `py-spy` (called automatically with `--subprocesses`) or emit single-process `PERF_METRIC`
+    sub-timings to measure worker hotspots directly.
 - **Memory gap (`OS Peak RSS` vs `tracemalloc` Python heap):**
   - `tracemalloc` only sees Python objects (`list`, `dict`, instances). NumPy arrays, Shapely
     GEOS geometries, `laspy` point buffers, OpenCV `Mat` and PyTorch tensors allocate directly via
@@ -53,9 +59,12 @@ gap, reach for these lightweight open-source tools (probed by `clean_arch_perf e
 tracking and baseline comparison charts. Keep these rules in mind:
 
 - **In-process sub-timings (`PERF_METRIC`)**: `wall` includes Python startup and imports. When
-  optimizing an inner stage, print `PERF_METRIC stage_name=<seconds>` (measured with
-  `time.perf_counter()` after loading/warm-up) or `PERF_METRIC gpu_peak_mb=<mb>`; `bench` tracks
-  and plots every metric alongside `wall` and `peak_mb`.
+  optimizing an inner stage, print `PERF_METRIC stage_s=<seconds>` (measured with
+  `time.perf_counter()` after loading/warm-up), `PERF_METRIC latency_ms=<ms>`,
+  `PERF_METRIC gpu_peak_mb=<mb>`, or `PERF_METRIC parsed_lines=<count>`; `bench` infers units from
+  `_s` / `_ms` / `_mb` suffixes (plain names render as dimensionless counts) and plots every metric
+  alongside `wall` and `peak_mb`. When an inner `_s` metric drops sharply while `wall` barely
+  moves, the bottleneck has shifted to IPC, process startup, or I/O.
 - **Same conditions every time**: same machine, power state, Python interpreter and thread env
   vars (`OMP_NUM_THREADS`, etc.).
 - **Noise first**: if `spread` exceeds ~10%, quiet background load, pin input seeds, or increase

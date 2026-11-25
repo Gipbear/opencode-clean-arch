@@ -940,8 +940,18 @@ def mermaid_id(name: str) -> str:
 
 def mermaid_packages(facts: dict, max_nodes: int, focus: str | None) -> str:
     edges = facts["package_edges"]
+    cycles = facts["package_cycles"]
+    module_fallback = False
     if focus:
         edges = [e for e in edges if e["from"].startswith(focus) or e["to"].startswith(focus)]
+    if not edges and facts.get("module_edges"):
+        mod_edges = facts["module_edges"]
+        if focus:
+            mod_edges = [e for e in mod_edges if e["from"].startswith(focus) or e["to"].startswith(focus)]
+        if mod_edges:
+            edges = mod_edges
+            cycles = facts.get("module_cycles", [])
+            module_fallback = True
     weight: Counter = Counter()
     process = [e for e in facts["process_edges"]
                if not focus or e["from"].startswith(focus) or e["to"].startswith(focus)]
@@ -951,13 +961,15 @@ def mermaid_packages(facts: dict, max_nodes: int, focus: str | None) -> str:
     for e in process:
         weight[e["from"]] += 1
         weight[e["to"]] += 1
-    cyclic = {n for c in facts["package_cycles"] for n in c} & set(weight)
+    cyclic = {n for c in cycles for n in c} & set(weight)
     keep = set(cyclic)
     for n, _ in weight.most_common():
         if len(keep) >= max(max_nodes, len(cyclic)):
             break
         keep.add(n)
     lines = ["flowchart LR"]
+    if module_fallback:
+        lines.append("  %% single-package scope: showing module-level edges")
     for n in sorted(keep):
         lines.append(f'  {mermaid_id(n)}["{n}"]')
     for e in edges:

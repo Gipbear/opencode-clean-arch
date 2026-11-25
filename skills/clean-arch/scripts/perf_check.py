@@ -44,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from perf_viz import (  # noqa: E402
     find_tool_near_python,
+    infer_metric_unit,
     parse_target_args,
     profile_cpu,
     profile_imports,
@@ -587,13 +588,20 @@ def run_bench(command: str, cwd: Path, runs: int, warmup: int, timeout: float | 
     return {k: v for k, v in metrics.items() if len(v) == runs}
 
 
-def _is_mem_metric(metric: str) -> bool:
-    return metric == "peak_mb" or metric.endswith("_mb")
-
-
 def fmt_metric(metric: str, value: float) -> str:
-    if _is_mem_metric(metric):
+    unit, _ = infer_metric_unit(metric)
+    if unit == "MB":
         return f"{value:.1f} MB" if value >= 10 else f"{value:.2f} MB"
+    if unit == "ms":
+        return f"{value:.1f} ms" if value >= 10 else f"{value:.2f} ms"
+    if unit == "s":
+        if value >= 100:
+            return f"{value:.1f}s"
+        if value >= 1:
+            return f"{value:.3f}s"
+        return f"{value:.4f}s"
+    if abs(value - round(value)) < 1e-9 and abs(value) < 1e15:
+        return f"{int(round(value))}"
     if value >= 100:
         return f"{value:.1f}"
     if value >= 1:
@@ -606,16 +614,23 @@ def compute_comparisons(computed: dict[str, dict], baseline: dict, threshold: fl
     for metric, new in computed.items():
         if metric not in baseline.get("metrics", {}):
             continue
-        old = stats(baseline["metrics"][metric])
+        old_vals = baseline["metrics"][metric]
+        old = stats(old_vals)
         change = (new["median"] - old["median"]) / old["median"] if old["median"] else 0.0
         band = max(threshold, old["spread"], new["spread"])
-        mem = _is_mem_metric(metric)
-        if abs(change) <= band:
+        _, kind = infer_metric_unit(metric)
+        disjoint = (
+            len(old_vals) >= 3
+            and new.get("n", 3) >= 3
+            and abs(change) >= 0.01
+            and (new["min"] > old["max"] or new["max"] < old["min"])
+        )
+        if abs(change) <= band and not disjoint:
             verdict = "within noise"
         elif change < 0:
-            verdict = "lower" if mem else "faster"
+            verdict = "faster" if kind == "time" else "lower"
         else:
-            verdict = "HIGHER" if mem else "SLOWER"
+            verdict = "SLOWER" if kind == "time" else "HIGHER"
         rows.append({
             "metric": metric,
             "old_min": old["min"], "old_med": old["median"], "old_max": old["max"],
@@ -701,6 +716,8 @@ def render_profile(name: str, data: dict) -> str:
         if cpu.get("svg"):
             svgs.append(cpu["svg"])
             out.append(f"- Flame graph SVG: `{cpu['svg']}`")
+        for note in cpu.get("notes", []):
+            out.append(f"- **WARNING**: {note}")
         out += ["", "### Top functions by cumulative time (call path)", "",
                 "| Function | cum (s) | self (s) | % | Location |", "|---|---|---|---|---|"]
         for r in cpu.get("top_cumulative", [])[:10]:
@@ -867,8 +884,11 @@ def cmd_lessons(args: argparse.Namespace) -> int:
     path = lessons_path()
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     entries = parse_entries(text)
-    if args.entry:
-        new_text = args.entry.replace("\\n", "\n").strip()
+    raw_entry = args.entry
+    if getattr(args, "entry_file", None):
+        raw_entry = Path(args.entry_file).read_text(encoding="utf-8")
+    if raw_entry:
+        new_text = raw_entry.replace("\\n", "\n").strip()
         parsed = parse_entries(new_text)
         if len(parsed) != 1 or not new_text.startswith("## "):
             sys.exit("--entry must be exactly one entry: a '## title' line followed by '- key: value' lines")
@@ -950,6 +970,7 @@ def main(argv: list[str] | None = None) -> int:
     lessons = sub.add_parser("lessons", help="search or add measured optimization lessons")
     lessons.add_argument("--query")
     lessons.add_argument("--entry", help="one Markdown entry to add (use \\n for line breaks)")
+    lessons.add_argument("--entry-file", help="read the Markdown entry to add from a UTF-8 file")
     lessons.add_argument("--limit", type=int, default=8)
 
     args = parser.parse_args(argv)

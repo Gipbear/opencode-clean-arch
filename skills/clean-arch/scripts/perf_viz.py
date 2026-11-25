@@ -191,6 +191,22 @@ PALETTE = {
 }
 
 
+def infer_metric_unit(metric: str) -> tuple[str, str]:
+    """Return (unit_suffix, kind_label) where kind_label is 'time' | 'memory' | 'count'."""
+    m = metric.lower()
+    if m == "peak_mb" or m.endswith("_mb"):
+        return "MB", "memory"
+    if m.endswith("_ms"):
+        return "ms", "time"
+    if m in ("count", "lines", "items", "rows", "calls") or m.endswith(
+        ("_count", "_lines", "_items", "_rows", "_calls", "_blocks", "_ops", "_files", "_records")
+    ):
+        return "", "count"
+    if m == "wall" or m.endswith(("_s", "_sec", "_secs", "_seconds", "_time")) or m in ("cpu", "elapsed", "latency", "duration"):
+        return "s", "time"
+    return "", "time"
+
+
 def _fmt_val(v: float, unit: str) -> str:
     if unit == "s":
         if v >= 10:
@@ -202,6 +218,10 @@ def _fmt_val(v: float, unit: str) -> str:
         return f"{v:.1f} MB" if v >= 10 else f"{v:.2f} MB"
     if unit == "ms":
         return f"{v:.1f} ms" if v >= 10 else f"{v:.2f} ms"
+    if not unit:
+        if abs(v - round(v)) < 1e-9 and abs(v) < 1e15:
+            return f"{int(round(v))}"
+        return f"{v:.4g}"
     return f"{v:.3g} {unit}".strip()
 
 
@@ -337,7 +357,7 @@ def render_bench_svg(title: str, comparisons: list[dict], base_name: str, cand_n
 
     for idx, row in enumerate(comparisons):
         gy = header_h + idx * group_h
-        unit = "MB" if row["metric"].endswith("_mb") or row["metric"] == "peak_mb" else "s"
+        unit, kind = infer_metric_unit(row["metric"])
         scale_max = max(row["old_max"], row["new_max"], row["old_med"], row["new_med"], 1e-9) * 1.08
 
         lines.append(f'  <line x1="{pad_x}" y1="{gy}" x2="{width - pad_x}" y2="{gy}" stroke="#EDF2F7"/>')
@@ -347,7 +367,7 @@ def render_bench_svg(title: str, comparisons: list[dict], base_name: str, cand_n
         )
         lines.append(
             f'  <text x="{pad_x}" y="{gy + 44}" fill="#64748B" font-family="system-ui,-apple-system,Segoe UI,sans-serif" '
-            f'font-size="11">{escape("memory" if unit == "MB" else "time")}</text>'
+            f'font-size="11">{escape(kind)}</text>'
         )
 
         # Baseline bar
@@ -547,6 +567,21 @@ finally:
 """
 
 
+def _subprocess_wait_notes(top_cum: list[dict], top_self: list[dict]) -> list[str]:
+    """Warn when an in-process profiler is dominated by waiting on child worker processes."""
+    markers = ("multiprocessing", "concurrent/futures", "subprocess", "imapiterator", "pool.", "popen.wait")
+    hit_pct = 0.0
+    for row in top_cum + top_self:
+        sig = f"{row.get('function', '')} {row.get('where', '')}".lower().replace("\\", "/")
+        if any(m in sig for m in markers):
+            hit_pct = max(hit_pct, float(row.get("pct", 0.0)))
+    if hit_pct >= 20.0:
+        return [
+            f"In-process profiler spent {hit_pct:.1f}% waiting on child workers (`multiprocessing`/`subprocess`). "
+            "Worker CPU does NOT appear in this flame graph — install `py-spy` (`--subprocesses`) or emit "
+            "single-process `PERF_METRIC` timings to measure worker hotspots directly."
+        ]
+    return []
 def _split_py_entry(py_argv: list[str]) -> tuple[str, str, list[str]] | None:
     """Parse ['-m', 'pkg.mod', 'a'] or ['script.py', 'a'] while ignoring leading -X/-W flags."""
     i = 0
@@ -636,6 +671,7 @@ def profile_cpu(root: Path, store: Path, name: str, python: str, py_argv: list[s
                         "svg": svg_file.relative_to(root).as_posix(),
                         "top_cumulative": hotspots["cum"],
                         "top_self": hotspots["self"],
+                        "notes": _subprocess_wait_notes(hotspots["cum"], hotspots["self"]),
                     }
 
     # 3. Standard-library cProfile fallback (always works across Linux/macOS/Windows)
@@ -671,6 +707,7 @@ def profile_cpu(root: Path, store: Path, name: str, python: str, py_argv: list[s
         "prof_file": prof_file.relative_to(root).as_posix(),
         "top_cumulative": cum_rows[:12],
         "top_self": self_rows[:12],
+        "notes": _subprocess_wait_notes(cum_rows[:12], self_rows[:12]),
     }
 
 

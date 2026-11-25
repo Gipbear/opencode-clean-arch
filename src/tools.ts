@@ -169,6 +169,7 @@ const perf: ToolSpec = {
     threshold: { type: "number", optional: true, description: "action=bench: smallest relative change that counts, default 0.05" },
     query: { type: "string", optional: true, description: "action=lessons: words to search for, e.g. 'shapely contains point'; omit to list the index" },
     entry: { type: "string", optional: true, description: "action=lessons: one Markdown entry to add ('## title' then '- key: value' lines); only for verified, measured results" },
+    entry_file: { type: "string", optional: true, description: "action=lessons: path to a UTF-8 file containing one Markdown entry to add" },
   },
   async execute(args, env) {
     const action = args.action ?? "scan"
@@ -203,6 +204,7 @@ const perf: ToolSpec = {
     } else if (action === "lessons") {
       if (args.query) argv.push("--query", args.query)
       if (args.entry) argv.push("--entry", args.entry)
+      if (args.entry_file) argv.push("--entry-file", path.resolve(env.directory, args.entry_file))
       if (args.limit) argv.push("--limit", String(args.limit))
     }
     env.progress(`clean_arch_perf ${action}`)
