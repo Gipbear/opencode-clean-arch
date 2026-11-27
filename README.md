@@ -69,47 +69,49 @@ New-Item -ItemType Junction -Path "$HOME\.gemini\config\plugins\clean-arch" -Tar
 
 ### 通用 MCP 客户端（Claude Code / Cursor / Codex 等）
 
-1. 安装运行时依赖：`npm install --omit=dev`（`dist/` 已预构建入库；若修改源码则执行 `npm install && npm run bundle`；也可直接 `npm install -g "git+https://github.com/Gipbear/opencode-clean-arch.git"` 获取 `clean-arch` CLI）；
+1. 直接通过 npm 全局安装：`npm install -g opencode-clean-arch`（或克隆仓库后执行 `npm install --omit=dev`，`dist/` 已预构建入库）；
 2. 把 `skills/` 复制或链接到客户端对应的 skills 目录（如 `.agents/skills/` 或 `.claude/skills/`）；
-3. 在客户端 MCP 配置中挂载 Stdio Server：
+3. 在客户端 MCP 配置中挂载 Stdio Server（全局安装后可直接运行 `clean-arch-mcp`，或用 `npx` 免安装启动）：
 
 ```json
 {
   "mcpServers": {
     "clean-arch": {
-      "command": "node",
-      "args": ["/path/to/opencode-clean-arch/dist/mcp.js"]
+      "command": "npx",
+      "args": ["-y", "-p", "opencode-clean-arch", "clean-arch-mcp"]
     }
   }
 }
 ```
 
+（若使用本地克隆目录，也可配置 `"command": "node", "args": ["/path/to/opencode-clean-arch/dist/mcp.js"]`。）
+
 ### opencode 1.x
 
 ```bash
-# 安装到当前项目（写入 .opencode/opencode.json），加 -g 安装到全局
-opencode plugin "git+https://github.com/Gipbear/opencode-clean-arch.git"
+# 从 npm 安装（推荐，自动走镜像源；加 -g 安装到全局）
+opencode plugin opencode-clean-arch
 ```
 
 或手动写配置：
 
 ```json
-{ "plugin": ["git+https://github.com/Gipbear/opencode-clean-arch.git"] }
+{ "plugin": ["opencode-clean-arch"] }
 ```
 
 ### opencode 2.x
 
 ```bash
-opencode plugin add "git+https://github.com/Gipbear/opencode-clean-arch.git"
+opencode plugin add opencode-clean-arch
 ```
 
 或手动写配置（注意 2.x 的键名是 `plugins`）：
 
 ```json
-{ "plugins": ["git+https://github.com/Gipbear/opencode-clean-arch.git"] }
+{ "plugins": ["opencode-clean-arch"] }
 ```
 
-固定到某个发布版本时，在地址后加标签，例如 `…/opencode-clean-arch.git#v0.1.0`，版本列表见 [Releases](https://github.com/Gipbear/opencode-clean-arch/releases)。两种写法也都支持 `github:Gipbear/opencode-clean-arch`、`git+ssh://…` 和本地路径（`/path/to/opencode-clean-arch`）。
+固定到某个发布版本时写 `opencode-clean-arch@0.4.4`，版本列表见 [npm](https://www.npmjs.com/package/opencode-clean-arch) 与 [Releases](https://github.com/Gipbear/opencode-clean-arch/releases)。两种写法也都支持直接从 Git 或本地目录安装（如 `"git+https://github.com/Gipbear/opencode-clean-arch.git#v0.4.4"`、`github:Gipbear/opencode-clean-arch`、`/path/to/opencode-clean-arch`）。
 
 ### 只用 skill，不装插件
 

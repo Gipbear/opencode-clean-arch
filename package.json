@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/index.ts",
   "bin": {
-    "clean-arch": "./dist/cli.js"
+    "clean-arch": "./dist/cli.js",
+    "clean-arch-mcp": "./dist/mcp.js"
   },
   "exports": {
     ".": "./src/index.ts"
@@ -26,9 +27,13 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "antigravity",
+    "mcp",
+    "mcp-server",
     "skills",
     "refactoring",
     "architecture",
+    "performance",
     "python"
   ],
   "license": "MIT",
