@@ -34,7 +34,7 @@ skill、6 个命令和 5 个工具，同一个包同时支持 Antigravity 原生
 ## 命令
 
 ```bash
-npm install         # 自动触发 prepare 构建 dist/
+npm install         # 安装依赖（勿加 prepare 钩子，纯 opencode 环境无 node 时会导致 git 安装失败）
 npm run build       # 构建 dist/review-app.html, dist/mcp.js, dist/agy-hooks.js, dist/cli.js
 npm test            # node scripts/run-tests.mjs + python3 -m unittest discover -s tests/python -t .
 npm run typecheck   # tsc --noEmit
