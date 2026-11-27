@@ -34,8 +34,8 @@ skill、6 个命令和 5 个工具，同一个包同时支持 Antigravity 原生
 ## 命令
 
 ```bash
-npm install         # 安装依赖（勿加 prepare 钩子，纯 opencode 环境无 node 时会导致 git 安装失败）
-npm run build       # 构建 dist/review-app.html, dist/mcp.js, dist/agy-hooks.js, dist/cli.js
+npm install         # 安装依赖
+npm run bundle      # 构建 dist/review-app.html, dist/mcp.js, dist/agy-hooks.js, dist/cli.js
 npm test            # node scripts/run-tests.mjs + python3 -m unittest discover -s tests/python -t .
 npm run typecheck   # tsc --noEmit
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> summary|json|mermaid|check|importers|verify
@@ -50,6 +50,7 @@ python3 skills/clean-arch/scripts/leftover_scan.py --root <repo> [--since <ref>]
   工具参数是 zod（`tool.schema`）。V2：`ctx.skill/command/tool.transform`，工具 `execute` 返回 `{ content }`；
   V2 服务刚启动时第一个请求可能早于插件加载完成。
 - 安装：V1 `opencode plugin <git-url>`（配置键 `plugin`），V2 `opencode plugin add <git-url>`（配置键 `plugins`）。
+  **不要在 `package.json` 的 `scripts` 里定义 `build`、`prepare`、`prepack` 或 `prepublish`** —— `opencode` 底层的 `pacote` 会把这些脚本视为 git 依赖准备钩子，在未全局安装 `node` 的纯 `opencode` 环境中会直接报 `git dep preparation failed`；构建脚本统一命名为 `npm run bundle`。
 - `rules.toml` 顶层键必须写在第一个 `[table]` 之前，否则会被吞进该表（`check` 会对未知键给出警告）。
 - beautiful-mermaid 的限制（渲染时会警告）：中文 subgraph id 布局错乱（写 `subgraph id["中文"]`）、
   `<-->` 只画一个箭头、`-.文字.->` 整条边丢失、`o--`/`*--` 菱形被遮住、`autonumber`/`rect rgb()`/`~~~`/`linkStyle` 无效；

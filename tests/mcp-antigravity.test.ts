@@ -41,6 +41,15 @@ describe("Antigravity plugin manifest & build artifacts", () => {
     expect(existsSync(path.join(DIST_DIR, "mcp.js"))).toBe(true)
     expect(existsSync(path.join(DIST_DIR, "agy-hooks.js"))).toBe(true)
     expect(existsSync(path.join(DIST_DIR, "cli.js"))).toBe(true)
+
+    // pacote (used by `opencode plugin git+...`) runs git-dep preparation whenever package.json
+    // defines build/prepare/prepack/prepublish, which fails on opencode-only machines without global node.
+    const pkgJson = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8"))
+    expect(pkgJson.version).toBe(pluginJson.version)
+    for (const forbidden of ["build", "prepare", "prepack", "prepublish"]) {
+      expect(pkgJson.scripts?.[forbidden]).toBe(undefined)
+    }
+    expect(pkgJson.scripts?.bundle).toBe("node scripts/build.mjs")
   })
 })
 

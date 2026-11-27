@@ -71,7 +71,7 @@ async function loadReviewAppHtml(): Promise<string> {
 export function createCleanArchMcpServer(): McpServer {
   const server = new McpServer({
     name: "clean-arch",
-    version: "0.4.1",
+    version: "0.4.2",
   })
   const panelTokens = new Map<string, string>()
 

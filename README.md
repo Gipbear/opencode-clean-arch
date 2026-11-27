@@ -53,7 +53,7 @@
 包含 `plugin.json`、`mcp_config.json`（MCP 工具 + 侧边栏交互式评审 **MCP App**）、`hooks.json`（诊断/待批阶段 `PreToolUse` 只读护栏）、`rules/AGENTS.md` 与全部 Skill（含 `/arch-review`）：
 
 ```bash
-npm install && npm run build
+npm install && npm run bundle
 # macOS / Linux 全局启用（推荐）：软链接到 Antigravity 全局插件目录
 ln -s "$(pwd)" ~/.gemini/config/plugins/clean-arch
 # Windows PowerShell 全局启用：创建目录联接（无需管理员权限）
@@ -68,7 +68,7 @@ New-Item -ItemType Junction -Path "$HOME\.gemini\config\plugins\clean-arch" -Tar
 
 ### 通用 MCP 客户端（Claude Code / Cursor / Codex 等）
 
-1. 构建一次：`npm install && npm run build`
+1. 构建一次：`npm install && npm run bundle`
 2. 把 `skills/` 复制或链接到客户端对应的 skills 目录（如 `.agents/skills/` 或 `.claude/skills/`）；
 3. 在客户端 MCP 配置中挂载 Stdio Server：
 
@@ -192,7 +192,7 @@ Agent 不会自己 `git commit` 或 `git push`：重构的改动和 `docs/archit
 不经过宿主客户端也可以使用（支持 Node ≥ 18 或 [bun](https://bun.sh)）：
 
 ```bash
-npm run build                                        # 编译 dist/mcp.js、dist/cli.js、dist/agy-hooks.js 与单文件 MCP App
+npm run bundle                                        # 编译 dist/mcp.js、dist/cli.js、dist/agy-hooks.js 与单文件 MCP App
 node dist/cli.js render docs/architecture/diagrams   # 重新渲染 SVG，可放进 CI（有 bun 也可用 bun src/cli.ts）
 node dist/cli.js review .clean-arch/plan.md          # 打开评审页面，结论打印到终端
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> summary
@@ -206,7 +206,7 @@ python3 skills/clean-arch/scripts/leftover_scan.py --root <repo> --since main --
 
 ```bash
 npm install
-npm run build       # 构建 Node 产物与 Antigravity MCP App 单文件 HTML
+npm run bundle       # 构建 Node 产物与 Antigravity MCP App 单文件 HTML
 npm test            # 有 bun 时运行 bun test，否则自动使用 esbuild + node --test；随后运行 Python unittest
 npm run typecheck
 ```
