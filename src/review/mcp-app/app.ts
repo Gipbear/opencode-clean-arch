@@ -27,6 +27,7 @@ interface ReviewPayload {
   diff?: DiffLine[] | null
   previous?: { revision: number; decision: Decision; comment: string; annotations: Omit<DraftAnnotation, "id" | "anchor">[] } | null
   draft?: { comment: string; annotations: Partial<DraftAnnotation>[] } | null
+  uiToken?: string
   message?: string
 }
 
@@ -42,6 +43,7 @@ const app = new App({ name: "clean-arch-review", version: "0.3.2" }, {})
 let currentRoot = ""
 let currentFile = ""
 let currentRevision = 1
+let currentUiToken = ""
 let state: { annotations: DraftAnnotation[]; comment: string } = { annotations: [], comment: "" }
 let pending: { range: Range; quote: string; section: string } | null = null
 let popoverKind: "comment" | "replace" | null = null
@@ -177,8 +179,19 @@ function restoreHighlight(a: DraftAnnotation) {
   highlightRange(range, a.id, a.kind)
 }
 
+function escAttr(id: string): string {
+  return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(id) : id.replace(/["\\]/g, "\\$&")
+}
+
+function activateTab(name: "doc" | "diff") {
+  document.querySelectorAll<HTMLElement>(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name))
+  $("pane-doc").hidden = name !== "doc"
+  $("pane-diff").hidden = name !== "diff"
+  hideFloating()
+}
+
 function unhighlight(id: string) {
-  doc.querySelectorAll(`mark[data-id="${id}"]`).forEach((mark) => {
+  doc.querySelectorAll(`mark[data-id="${escAttr(id)}"]`).forEach((mark) => {
     const parent = mark.parentNode
     if (!parent) return
     while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
@@ -213,7 +226,7 @@ function renderList() {
     if (a.kind === "replace") item.appendChild(el("div", "text", `→ ${a.text}`))
     else if (a.text) item.appendChild(el("div", "text", a.text))
     item.addEventListener("click", () => {
-      const mark = doc.querySelector(`mark[data-id="${a.id}"]`)
+      const mark = doc.querySelector(`mark[data-id="${escAttr(a.id)}"]`)
       if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" })
     })
     list.appendChild(item)
@@ -289,6 +302,7 @@ function renderDiff(diff: DiffLine[] | null | undefined) {
   box.replaceChildren()
   if (!diff) {
     $("tab-diff").hidden = true
+    activateTab("doc")
     return
   }
   $("tab-diff").hidden = false
@@ -361,10 +375,12 @@ function renderPayload(payload: ReviewPayload) {
   currentRoot = payload.root
   currentFile = payload.file
   currentRevision = payload.revision ?? 1
+  if (payload.uiToken) currentUiToken = payload.uiToken
   $("empty-view").hidden = true
   $("done-banner").hidden = true
   $("topbar").hidden = false
   $("main-layout").hidden = false
+  activateTab("doc")
 
   $("doc-title").textContent = payload.title || payload.file
   $("doc-meta").textContent = `${payload.file} · 第 ${currentRevision} 版`
@@ -426,6 +442,7 @@ async function submitDecision(decision: Decision) {
           section: a.section,
           text: a.text,
         })),
+        uiToken: currentUiToken,
       },
     })
     const result = res.structuredContent as { formatted?: string; record?: string } | undefined
@@ -502,7 +519,7 @@ $("popover-text").addEventListener("keydown", (event) => {
 doc.addEventListener("click", (event) => {
   const mark = (event.target as HTMLElement | null)?.closest("mark.ann") as HTMLElement | null
   if (!mark?.dataset.id) return
-  const item = document.querySelector(`.annotation[data-id="${mark.dataset.id}"]`)
+  const item = document.querySelector(`.annotation[data-id="${escAttr(mark.dataset.id)}"]`)
   if (!item) return
   item.scrollIntoView({ behavior: "smooth", block: "nearest" })
   item.classList.add("flash")
@@ -515,10 +532,7 @@ $("comment").addEventListener("input", (event) => {
 
 document.querySelectorAll<HTMLButtonElement>(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab))
-    $("pane-doc").hidden = tab.dataset.tab !== "doc"
-    $("pane-diff").hidden = tab.dataset.tab !== "diff"
-    hideFloating()
+    activateTab(tab.dataset.tab === "diff" ? "diff" : "doc")
   })
 })
 

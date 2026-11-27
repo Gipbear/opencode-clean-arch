@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { Marked, type Tokens } from "marked"
 import { diagramWarnings, mermaidToSvg } from "../render.ts"
+import { isPathInside } from "./state.ts"
 
 const SAFE_TAG = /^<\/?(sub|sup|br|kbd|b|i|em|strong|code|details|summary|p|hr)\s*\/?>$/i
 const INLINE_IMAGE_TYPES: Record<string, string> = {
@@ -27,10 +28,16 @@ export interface RenderMarkdownOptions {
 
 function tryInlineLocalImage(rootDir: string, docDir: string, href: string): string | null {
   const resolvedRoot = path.resolve(rootDir)
-  const rel = path.posix.normalize(path.posix.join(docDir, href))
+  let cleanHref = href.split(/[?#]/)[0].replace(/\\/g, "/")
+  try {
+    cleanHref = decodeURIComponent(cleanHref)
+  } catch {
+    // 非法百分号序列保持原样交由路径解析检查
+  }
+  const rel = path.posix.normalize(path.posix.join(docDir.replace(/\\/g, "/"), cleanHref))
   const full = path.resolve(resolvedRoot, rel)
   const mime = INLINE_IMAGE_TYPES[path.extname(full).toLowerCase()]
-  if (!mime || !full.startsWith(resolvedRoot + path.sep)) return null
+  if (!mime || !isPathInside(resolvedRoot, full)) return null
   try {
     const buf = readFileSync(full)
     if (buf.byteLength > MAX_INLINE_IMAGE_BYTES) return null

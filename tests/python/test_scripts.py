@@ -563,6 +563,25 @@ class PerfCheckTest(unittest.TestCase):
         self.assertIn("singlepkg.a", out)
         self.assertIn("singlepkg.b", out)
 
+    def test_toml_fallback_literal_strings_and_nested_multiline_arrays(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import arch_facts as af
+
+        sample = (
+            'no_cycles = true\n'
+            '[[forbid]]\n'
+            "from = 'pkg\\sub'\n"
+            'to = "os*"\n'
+            'nested = [\n'
+            '  ["a", "b"], # inline comment with ]\n'
+            '  ["c"]\n'
+            ']\n'
+        )
+        parsed = af._parse_toml_fallback(sample)
+        self.assertTrue(parsed["no_cycles"])
+        self.assertEqual(parsed["forbid"][0]["from"], r"pkg\sub")
+        self.assertEqual(parsed["forbid"][0]["nested"], [["a", "b"], ["c"]])
+
 
 if __name__ == "__main__":
     unittest.main()

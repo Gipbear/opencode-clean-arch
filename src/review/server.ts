@@ -6,6 +6,7 @@ import os from "node:os"
 import { renderPage } from "./page.ts"
 import {
   commitReviewDecision,
+  enterReviewState,
   formatOutcome,
   parseDecision,
   prepareReviewDocument,
@@ -73,6 +74,7 @@ export async function startReview(options: Omit<ReviewOptions, "signal">): Promi
     token,
     imageMode: "http",
   })
+  await enterReviewState(prepared.root, prepared.relFile)
   const html = renderPage(prepared.page)
 
   let settle: (outcome: { decision: ReviewOutcome["decision"]; comment: string; annotations: Annotation[] }) => void
@@ -118,6 +120,7 @@ export async function startReview(options: Omit<ReviewOptions, "signal">): Promi
 
   const timeoutMs = options.timeoutMs ?? settings.timeoutMs
   const timer = setTimeout(() => settle({ decision: "timeout", comment: "", annotations: [] }), timeoutMs)
+  timer.unref?.()
 
   const outcome = decided.then(async (result): Promise<ReviewOutcome> => {
     clearTimeout(timer)

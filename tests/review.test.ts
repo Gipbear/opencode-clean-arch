@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { diffLines } from "../src/review/diff.ts"
 import { renderMarkdown } from "../src/review/markdown.ts"
 import { formatOutcome, runReview } from "../src/review/server.ts"
+import { historyDirFor, saveReviewDraft } from "../src/review/store.ts"
 import { TOOLS } from "../src/tools.ts"
 
 const PLAN = `# Plan: remove billing copy
@@ -178,9 +179,14 @@ describe("review server", () => {
     expect((await again.outcome).revision).toBe(2)
   })
 
-  test("times out and cancels", async () => {
-    const timedOut = await startReview(project(), { timeoutMs: 50 }).outcome
+  test("times out and cancels without deleting drafts or writing bogus rN.json", async () => {
+    const p1 = project()
+    await saveReviewDraft(p1, ".clean-arch/plan.md", 1, { comment: "keep me", annotations: [] })
+    const timedOut = await startReview(p1, { timeoutMs: 50 }).outcome
     expect(timedOut.decision).toBe("timeout")
+    expect(timedOut.record).toBe("")
+    expect(existsSync(path.join(p1, ".clean-arch/reviews/plan/r1.json"))).toBe(false)
+    expect(existsSync(path.join(p1, ".clean-arch/reviews/plan/draft-r1.json"))).toBe(true)
     expect(formatOutcome(timedOut)).toContain("Ask the user in chat")
 
     const controller = new AbortController()
@@ -188,6 +194,10 @@ describe("review server", () => {
     await run.url
     controller.abort()
     expect((await run.outcome).decision).toBe("cancelled")
+
+    // 同名文件位于不同目录时历史目录互不碰撞，而 .clean-arch/plan.md 仍保持 reviews/plan
+    expect(historyDirFor(p1, ".clean-arch/plan.md")).toBe(path.join(p1, ".clean-arch", "reviews", "plan"))
+    expect(historyDirFor(p1, "README.md")).not.toBe(historyDirFor(p1, "docs/architecture/README.md"))
   })
 
   test("the tool returns the URL at once on open and the decision on wait", async () => {

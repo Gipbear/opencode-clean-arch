@@ -3,7 +3,7 @@ import path from "node:path"
 import { diffLines } from "./diff.ts"
 import { renderMarkdown } from "./markdown.ts"
 import type { PageData } from "./page.ts"
-import { readWorkflowState, writeWorkflowState } from "./state.ts"
+import { isPathInside, readWorkflowState, writeWorkflowState } from "./state.ts"
 import type { Annotation, Decision, ReviewOutcome } from "./types.ts"
 
 const DECISIONS: Decision[] = ["approved", "approved_with_notes", "changes_requested"]
@@ -32,24 +32,37 @@ export interface PreparedReview {
   draft: ReviewDraft | null
 }
 
-/** 校验并解析项目内的目标文件路径，拒绝越界访问。 */
+/** 校验并解析项目内的目标文件路径，拒绝越界访问（兼容 Windows 盘符大小写差异）。 */
 export function resolveProjectFile(rootDir: string, targetFile: string): { root: string; full: string; relFile: string } {
   const root = path.resolve(rootDir)
   const full = path.resolve(root, targetFile)
-  if (!full.startsWith(root + path.sep) && full !== root) {
+  if (!isPathInside(root, full)) {
     throw new Error(`${targetFile} is outside ${root}`)
   }
-  const rel = path.relative(root, full)
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(`${targetFile} is outside ${root}`)
-  }
-  return { root, full, relFile: rel.split(path.sep).join("/") }
+  const normRoot = process.platform === "win32" ? root.toLowerCase() : root
+  const normFull = process.platform === "win32" ? full.toLowerCase() : full
+  const relNorm = path.relative(normRoot, normFull)
+  const relActual = full.slice(full.length - relNorm.length)
+  return { root, full, relFile: relActual.split(path.sep).join("/") }
 }
 
-/** 计算评审历史目录路径（按文档基础文件名归档）。 */
+/** 计算评审历史目录路径：`.clean-arch/<name>.md` 保持 `<name>`，其余按相对路径生成无碰撞目录名。 */
 export function historyDirFor(root: string, fileFullPath: string): string {
-  const base = path.basename(fileFullPath).replace(/\.[^.]+$/, "")
-  return path.join(root, ".clean-arch", "reviews", base)
+  const { relFile } = resolveProjectFile(root, fileFullPath)
+  const withoutExt = relFile.replace(/\.[^./]+$/, "")
+  const cleanArchMatch = withoutExt.match(/^\.clean-arch\/([^/]+)$/)
+  const slug = cleanArchMatch
+    ? cleanArchMatch[1]
+    : withoutExt.replace(/^\.clean-arch\//, "").replace(/\//g, "__").replace(/[^A-Za-z0-9_.\-\u4e00-\u9fa5]/g, "_")
+  return path.join(path.resolve(root), ".clean-arch", "reviews", slug || "doc")
+}
+
+/** 打开评审会话时，将重构跟踪中的文档切换至 `awaiting_approval` 只读保护期。 */
+export async function enterReviewState(root: string, relFile: string): Promise<void> {
+  const existingState = await readWorkflowState(root)
+  if (existingState || relFile === ".clean-arch/plan.md" || relFile === ".clean-arch/perf.md") {
+    await writeWorkflowState(root, "awaiting_approval", relFile)
+  }
 }
 
 export function firstHeading(markdown: string): string {
@@ -227,6 +240,18 @@ export async function commitReviewDecision(options: {
   url: string
 }): Promise<ReviewOutcome> {
   const { root, full, relFile } = resolveProjectFile(options.root, options.file)
+  if (options.decision === "timeout" || options.decision === "cancelled") {
+    return {
+      decision: options.decision,
+      comment: "",
+      annotations: [],
+      revision: options.revision,
+      record: "",
+      url: options.url,
+      diagramWarnings: options.diagramWarnings,
+    }
+  }
+
   const historyDir = historyDirFor(root, full)
   await mkdir(historyDir, { recursive: true })
   const recordPath = path.join(historyDir, `r${options.revision}.json`)
@@ -252,12 +277,17 @@ export async function commitReviewDecision(options: {
     }
   }
 
+  const normRoot = process.platform === "win32" ? root.toLowerCase() : root
+  const normRec = process.platform === "win32" ? recordPath.toLowerCase() : recordPath
+  const relLen = path.relative(normRoot, normRec).length
+  const recordRel = recordPath.slice(recordPath.length - relLen).split(path.sep).join("/")
+
   return {
     decision: options.decision,
     comment: options.comment,
     annotations: options.annotations,
     revision: options.revision,
-    record: path.relative(root, recordPath).split(path.sep).join("/"),
+    record: recordRel,
     url: options.url,
     diagramWarnings: options.diagramWarnings,
   }
@@ -271,7 +301,7 @@ export async function readSafeProjectImage(
   const root = path.resolve(rootDir)
   const full = path.resolve(root, relPath)
   const type = IMAGE_TYPES[path.extname(full).toLowerCase()]
-  if (!type || !full.startsWith(root + path.sep)) return null
+  if (!type || !isPathInside(root, full)) return null
   try {
     const body = await readFile(full)
     return { type, body }
@@ -281,11 +311,15 @@ export async function readSafeProjectImage(
 }
 
 export function formatOutcome(outcome: ReviewOutcome): string {
-  const lines = [`Decision: ${outcome.decision}`, `Revision: ${outcome.revision} (feedback saved to ${outcome.record})`]
   if (outcome.decision === "timeout" || outcome.decision === "cancelled") {
-    lines.push("", "No decision was made in the review page. Ask the user in chat to review the file and approve or give feedback.")
-    return lines.join("\n")
+    return [
+      `Decision: ${outcome.decision}`,
+      `Revision: ${outcome.revision} (undecided; any saved draft was preserved)`,
+      "",
+      "No decision was made in the review page. Ask the user in chat to review the file and approve or give feedback.",
+    ].join("\n")
   }
+  const lines = [`Decision: ${outcome.decision}`, `Revision: ${outcome.revision} (feedback saved to ${outcome.record})`]
   if (outcome.comment) lines.push("", "General comment:", outcome.comment)
   if (outcome.diagramWarnings?.length) {
     lines.push("", "Diagram rendering warnings (fix them in this document):", ...outcome.diagramWarnings.map((w) => `- ${w}`))

@@ -1100,6 +1100,31 @@ def _split_toml_array(body: str) -> list[str]:
     return items
 
 
+def _toml_bracket_balance(text: str) -> int:
+    """计算 TOML 片段中引号外的方括号净深度（`[` 加 1，`]` 减 1）。"""
+    quote = ""
+    escaped = False
+    depth = 0
+    for ch in text:
+        if escaped:
+            escaped = False
+            continue
+        if quote == '"' and ch == "\\":
+            escaped = True
+            continue
+        if ch in ('"', "'"):
+            if quote == ch:
+                quote = ""
+            elif not quote:
+                quote = ch
+        elif not quote:
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+    return depth
+
+
 def _parse_toml_value(raw: str):
     """解析规则文件中用到的 TOML 基础值（字符串、布尔、整数、数组）。"""
     val = raw.strip()
@@ -1109,8 +1134,10 @@ def _parse_toml_value(raw: str):
         return False
     if val.startswith("[") and val.endswith("]"):
         return [_parse_toml_value(item) for item in _split_toml_array(val[1:-1])]
-    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-        return ast.literal_eval(val)
+    if val.startswith("'") and val.endswith("'"):
+        return val[1:-1]
+    if val.startswith('"') and val.endswith('"'):
+        return json.loads(val)
     if re.fullmatch(r"[+-]?\d+", val):
         return int(val)
     if re.fullmatch(r"[+-]?\d+\.\d+", val):
@@ -1146,7 +1173,7 @@ def _parse_toml_fallback(text: str) -> dict:
         key = key.strip().strip('"').strip("'")
         val = val.strip()
         # 多行数组：仅统计引号外的中括号平衡，直到闭合为止
-        while val.startswith("[") and not val.endswith("]") and i < len(lines):
+        while val.startswith("[") and _toml_bracket_balance(val) > 0 and i < len(lines):
             next_part = _strip_toml_comment(lines[i]).strip()
             i += 1
             if next_part:

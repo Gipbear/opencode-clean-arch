@@ -2,7 +2,7 @@
 
 让聊天式迭代长出来的零散 Python 代码回到**主干清晰、契约显式、职责扁平、没有遗留版本、有图可看**的状态。
 
-这是一个 opencode 插件，包含 9 个 skill、6 个斜杠命令和 5 个工具，同时支持 opencode 1.x 与 2.x：
+这是一个多宿主架构重构与性能调优插件，包含 10 个 skill、6 个斜杠命令和 5 个工具，同时支持 Antigravity、通用 MCP 客户端（Claude Code / Cursor / Codex）以及 opencode 1.x 与 2.x：
 
 - **一眼看懂脉络，绝不过度抽象**：以**显式主干编排（30–50 行故事主线） + `@dataclass` 数据契约 + 扁平单向三层**为目标，严禁单实现 `ABC`/`Factory`、纯转发中间层和 `utils.py` 垃圾桶；
 - **两轮浏览器评审演进**：先只读诊断（区分架构设计病灶与死代码噪音）→ **第一轮**在浏览器拍板“一页纸目标架构蓝图”并只做减法清扫消噪 → **第二轮**在干净代码上专项落地数据契约、I/O 边缘化与主干重塑；
@@ -19,6 +19,7 @@
 | `clean-arch` | 总流程：基线 → 架构与卫生分离诊断 → 第一轮（目标蓝图对齐 + 减法清扫） → 第二轮（主干、数据契约与三层边界重塑） → 收尾门禁 → 文档 |
 | `arch-diagnose` | 只读诊断：顺着入口追踪主干脉络、隐式字典契约、I/O 渗透、散落业务概念、反向依赖与过度抽象，与死代码卫生项分开汇报 |
 | `arch-plan` | 编写带“一页纸目标架构蓝图”（主干步骤、`@dataclass` 清单、扁平三层模块表、反臃肿自检）的两轮重构方案，提交浏览器评审 |
+| `arch-review` | 交互式评审会话（Antigravity 侧边栏 MCP App 或本地浏览器页面）：逐段批注评论/删除/替换、对比版本 Diff 并回传审批结论 |
 | `restructure-modules` | 架构与模块重构剧本：提炼薄主干编排、散装 `dict` 升级为 `@dataclass`、剥离核心层 I/O、收拢散落概念与拆解 `utils`、合并平行版本；同一步更新所有引用 |
 | `simplify-code` | 函数与类级别可读性简化（保持主干单一抽象层级、守卫语句、`dataclass` 参数、删除单实现投机抽象和防御性噪音） |
 | `comment-hygiene` | 注释只写“为什么”和约束；删除改动叙述、历史、复述代码、注释掉的代码 |
@@ -40,7 +41,7 @@
 | `clean_arch_facts` | 静态架构事实与设计气味探测（只解析不导入代码）：入口、包/模块依赖与循环、显式数据模型、混杂 I/O 的面条编排函数、跨模块重复字典键簇（隐式数据结构）、弱字典边界、混杂外部 I/O 的核心模块、散落 I/O、`utils` 垃圾桶、单实现抽象与单方法伪类、重复代码、热点、Mermaid 草图、`importers` 全量引用查询、`check` 分层与禁用依赖校验、`verify` 图码一致性核对 |
 | `clean_arch_leftovers` | 遗留扫描，支持 `since=<git ref>` 只看本次改动 |
 | `clean_arch_render` | `*.mmd` → 自包含 SVG（颜色写死、无外部字体），适合代码托管平台直接预览；对渲染器不支持的写法和过宽的图给出警告 |
-| `clean_arch_review` | 评审页面，分两步：`open` 启动页面并立即返回链接，`wait` 阻塞等待结论并返回结构化批注 |
+| `clean_arch_review` | 交互式评审：在 Antigravity 等 MCP App 宿主中默认通过 `panel` 打开侧边栏评审面板（非阻塞）；在 CLI / opencode / 普通 MCP 客户端中分两步：`open` 启动本地网页并立即返回链接，`wait` 阻塞等待结论并返回结构化批注 |
 | `clean_arch_perf` | 性能与内存调优辅助（`perf-tune` 用），五个动作：`env` 探测解释器加速后端与已安装的开源剖析器（`py-spy`、`pyinstrument`、`memray`、`scalene`）；`profile` 自动调度开源剖析器（未安装时退回标准库 `cProfile`/`tracemalloc`/`-X importtime`）采集 CPU、内存与启动耗时并生成**自包含火焰图 SVG**；`bench` 多轮测量墙钟耗时与**跨平台真实物理内存峰值（`peak_mb`）**，对比基线时自动生成**前后对比图 SVG**；`scan` 静态扫描已知慢模式线索；`lessons` 检索或追加已验证的优化经验 |
 
 ## 安装
@@ -53,8 +54,10 @@
 
 ```bash
 npm install && npm run build
-# 全局启用（推荐）：软链接到 Antigravity 全局插件目录
+# macOS / Linux 全局启用（推荐）：软链接到 Antigravity 全局插件目录
 ln -s "$(pwd)" ~/.gemini/config/plugins/clean-arch
+# Windows PowerShell 全局启用：创建目录联接（无需管理员权限）
+New-Item -ItemType Junction -Path "$HOME\.gemini\config\plugins\clean-arch" -Target (Get-Location).Path
 ```
 
 或在目标仓库的 `.agents/plugins.json` 中按项目启用：
@@ -80,7 +83,7 @@ ln -s "$(pwd)" ~/.gemini/config/plugins/clean-arch
 }
 ```
 
-### opencode 1.x / 2.x
+### opencode 1.x
 
 ```bash
 # 安装到当前项目（写入 .opencode/opencode.json），加 -g 安装到全局

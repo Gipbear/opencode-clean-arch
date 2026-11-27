@@ -1,7 +1,7 @@
 # AGENTS.md
 
-opencode 插件 `opencode-clean-arch`：把“诊断 → 方案评审 → 执行重构 → 收尾门禁 → 架构文档”做成 9 个
-skill、6 个命令和 5 个工具，同一个包同时支持 opencode V1（1.x，`@opencode-ai/plugin`）和 V2（2.x，`@opencode/cli`）。
+架构重构与性能调优插件 `opencode-clean-arch`：把“诊断 → 方案评审 → 执行重构 → 收尾门禁 → 架构文档 / 性能剖析”做成 10 个
+skill、6 个命令和 5 个工具，同一个包同时支持 Antigravity 原生插件、通用 MCP 客户端以及 opencode V1（1.x，`@opencode-ai/plugin`）和 V2（2.x，`@opencode/cli`）。
 用户说明见 `README.md`（中文）。开发过程和未完成事项见本地文件 `docs/HANDOFF.md`（不入库）。
 
 ## 与用户约定的原则
@@ -18,22 +18,25 @@ skill、6 个命令和 5 个工具，同一个包同时支持 opencode V1（1.x�
 
 | 路径 | 内容 |
 |---|---|
-| `src/index.ts` | 插件入口：默认导出 `{ id, setup(ctx) /* V2 */, server(input) /* V1 */ }` |
-| `src/tools.ts` | 5 个工具的统一定义（`ToolSpec`），再转成 V1 的 zod 形状或 V2 的 JSON Schema |
+| `src/index.ts` | opencode 插件入口：默认导出 `{ id, setup(ctx) /* V2 */, server(input) /* V1 */ }` |
+| `src/adapters/` | `mcp.ts`（Stdio MCP Server + Antigravity MCP App 侧边栏评审）、`agy-hooks.ts`（`PreToolUse` 只读门禁） |
+| `src/tools.ts` | 5 个工具的统一定义（`ToolSpec`），再转成 zod 形状或 JSON Schema |
 | `src/skills.ts`、`src/commands.ts` | 读取 `skills/*/SKILL.md`；6 个斜杠命令的模板 |
 | `src/python.ts` | 调用 `skills/clean-arch/scripts/*.py`（`CLEAN_ARCH_PYTHON` 可指定解释器） |
 | `src/render.ts` | Mermaid → 自包含 SVG（beautiful-mermaid，展开 CSS 变量和 color-mix），以及渲染警告 |
-| `src/review/` | 检视页面：node:http 服务、页面（中文 UI）、Markdown 渲染、行级 diff、历史轮次 |
-| `src/cli.ts` | `bun src/cli.ts render|review`，不经 opencode 使用 |
-| `skills/` | 9 个 skill；`clean-arch/scripts/` 是只用标准库的 Python 分析脚本 |
+| `src/review/` | 检视内核与双端 UI：`store.ts`/`state.ts`、node:http 服务与页面、`mcp-app/` 侧边栏面板、Markdown 渲染与行级 diff |
+| `src/cli.ts`、`scripts/build.mjs` | `node dist/cli.js render|review`（esbuild 构建出 `dist/` 供 MCP、Hook 与 CLI 使用） |
+| `plugin.json`、`mcp_config.json`、`hooks.json` | Antigravity 原生插件清单、MCP 配置与 `PreToolUse` 钩子声明 |
+| `skills/` | 10 个 skill；`clean-arch/scripts/` 是只用标准库的 Python 分析脚本 |
 | `skills/arch-map/references/templates/` | 4+1 文档模板（中文）和 `ai/` 下给 AI 的模板 |
-| `tests/` | `plugin.test.ts`、`review.test.ts`（bun test）；`python/test_scripts.py`（unittest）；`fixtures/sample_repo` 是故意埋了各种问题的样例仓库 |
+| `tests/` | `plugin.test.ts`、`review.test.ts`、`mcp-antigravity.test.ts`；`python/test_scripts.py`（unittest）；`fixtures/sample_repo` 样例仓库 |
 
 ## 命令
 
 ```bash
-npm install
-npm test            # bun test + python3 -m unittest discover -s tests/python -t .
+npm install         # 自动触发 prepare 构建 dist/
+npm run build       # 构建 dist/review-app.html, dist/mcp.js, dist/agy-hooks.js, dist/cli.js
+npm test            # node scripts/run-tests.mjs + python3 -m unittest discover -s tests/python -t .
 npm run typecheck   # tsc --noEmit
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> summary|json|mermaid|check|importers|verify
 python3 skills/clean-arch/scripts/leftover_scan.py --root <repo> [--since <ref>] [--fail-on high]

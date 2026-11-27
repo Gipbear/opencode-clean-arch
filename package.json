@@ -45,6 +45,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
     "test": "node scripts/run-tests.mjs && python3 -m unittest discover -s tests/python -t .",
     "typecheck": "tsc --noEmit -p ."
   },

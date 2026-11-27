@@ -1,5 +1,5 @@
 import path from "node:path"
-import { isReadOnlyPhase, readWorkflowState } from "../review/state.ts"
+import { isPathInside, isReadOnlyPhase, readWorkflowState } from "../review/state.ts"
 
 export interface HookPayload {
   hookEventName?: string
@@ -37,18 +37,16 @@ function isAllowedWriteTarget(root: string, targetPath: string): boolean {
   const resolvedRoot = path.resolve(root)
   const resolvedTarget = path.resolve(resolvedRoot, targetPath)
   // 工作区外路径（例如 Antigravity Artifacts 目录）不在此门禁范围内
-  if (!resolvedTarget.startsWith(resolvedRoot + path.sep) && resolvedTarget !== resolvedRoot) {
+  if (!isPathInside(resolvedRoot, resolvedTarget, true)) {
     return true
   }
   const cleanArchDir = path.join(resolvedRoot, ".clean-arch")
   const archDocsDir = path.join(resolvedRoot, "docs", "architecture")
   const gitExclude = path.join(resolvedRoot, ".git", "info", "exclude")
   return (
-    resolvedTarget === cleanArchDir ||
-    resolvedTarget.startsWith(cleanArchDir + path.sep) ||
-    resolvedTarget === archDocsDir ||
-    resolvedTarget.startsWith(archDocsDir + path.sep) ||
-    resolvedTarget === gitExclude
+    isPathInside(cleanArchDir, resolvedTarget, true) ||
+    isPathInside(archDocsDir, resolvedTarget, true) ||
+    isPathInside(gitExclude, resolvedTarget, true)
   )
 }
 
@@ -77,7 +75,9 @@ export async function evaluatePreToolUse(payload: HookPayload): Promise<PreToolU
   const phaseLabel = state?.phase === "diagnose" ? "架构诊断" : "方案待评审"
   return {
     decision: "deny",
-    reason: `Clean-Arch 门禁拦截：当前工作区处于【${phaseLabel}】只读阶段（${state?.doc ?? ".clean-arch/plan.md"}），在评审批准前禁止修改业务文件 ${targetPath}。`,
+    reason:
+      `Clean-Arch 门禁拦截：当前工作区处于【${phaseLabel}】只读阶段（${state?.doc ?? ".clean-arch/plan.md"}），` +
+      `在评审批准前禁止修改业务文件 ${targetPath}。若已放弃本次重构，可删除 .clean-arch/state.json 解除只读保护。`,
   }
 }
 

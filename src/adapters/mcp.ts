@@ -1,15 +1,16 @@
+import { randomBytes } from "node:crypto"
 import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { fileURLToPath, pathToFileURL } from "node:url"
-import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
+import { fileURLToPath } from "node:url"
+import { getUiCapability, registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { DIST_DIR } from "../paths.ts"
-import { readWorkflowState, writeWorkflowState } from "../review/state.ts"
 import {
   commitReviewDecision,
+  enterReviewState,
   formatOutcome,
   normalizeAnnotations,
   prepareReviewDocument,
@@ -19,6 +20,25 @@ import {
 import { TOOLS, toZodShape, type ToolEnv } from "../tools.ts"
 
 export const REVIEW_APP_URI = "ui://clean-arch/review.html"
+
+const NON_UI_CLIENT_RE = /(cursor|claude|codex|opencode|windsurf|cline|zed)/i
+
+function panelKey(root: string, relFile: string): string {
+  const normRoot = process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root)
+  return `${normRoot}::${relFile}`
+}
+
+function defaultReviewAction(server: McpServer): "panel" | "open" {
+  try {
+    const caps = server.server.getClientCapabilities()
+    if (getUiCapability(caps)) return "panel"
+    const clientName = server.server.getClientVersion()?.name ?? ""
+    if (NON_UI_CLIENT_RE.test(clientName)) return "open"
+  } catch {
+    // 忽略握手前或异常读取，默认保持 panel
+  }
+  return "panel"
+}
 
 /** 解析目标仓库根目录：显式参数 > MCP Client roots > 当前工作目录。 */
 async function resolveWorkspaceRoot(server: McpServer, explicitRoot?: string): Promise<string> {
@@ -53,6 +73,7 @@ export function createCleanArchMcpServer(): McpServer {
     name: "clean-arch",
     version: "0.3.2",
   })
+  const panelTokens = new Map<string, string>()
 
   // 注册 Antigravity MCP App 单文件 HTML 资源
   registerAppResource(
@@ -144,7 +165,7 @@ export function createCleanArchMcpServer(): McpServer {
     async (args: any, extra: any) => {
       const directory = await resolveWorkspaceRoot(server, args?.root)
       const targetFile = typeof args?.path === "string" && args.path.trim() ? args.path.trim() : ".clean-arch/plan.md"
-      const action = args?.action ?? "panel"
+      const action = args?.action ?? defaultReviewAction(server)
 
       if (action === "open" || action === "wait") {
         const env: ToolEnv = { directory, signal: extra?.signal, progress: () => {} }
@@ -179,12 +200,8 @@ export function createCleanArchMcpServer(): McpServer {
         title: args?.title,
         imageMode: "inline",
       })
-
-      // 同步状态为待评审，触发 Antigravity PreToolUse 写保护
-      const existingState = await readWorkflowState(resolved.root)
-      if (existingState || resolved.relFile === ".clean-arch/plan.md" || resolved.relFile === ".clean-arch/perf.md") {
-        await writeWorkflowState(resolved.root, "awaiting_approval", prepared.relFile)
-      }
+      panelTokens.set(panelKey(prepared.root, prepared.relFile), randomBytes(16).toString("hex"))
+      await enterReviewState(prepared.root, prepared.relFile)
 
       const warningNote = prepared.diagramWarnings.length
         ? `\n\nDiagram warnings:\n${prepared.diagramWarnings.map((w) => `- ${w}`).join("\n")}`
@@ -201,7 +218,7 @@ export function createCleanArchMcpServer(): McpServer {
               warningNote,
           },
         ],
-        // 保持 trajectory payload 轻量，由 UI 挂载后调用 review_app_load 拉取完整 HTML/Diff
+        // 保持 trajectory payload 轻量，由 UI 挂载后调用 review_app_load 拉取完整 HTML/Diff 与 uiToken
         structuredContent: {
           mode: "review",
           root: prepared.root,
@@ -218,7 +235,7 @@ export function createCleanArchMcpServer(): McpServer {
     server,
     "review_app_load",
     {
-      description: "Load full rendered review document, diff and draft for MCP App UI",
+      description: "[INTERNAL UI CALLBACK — DO NOT CALL FROM MODEL] Load full rendered review document, diff and draft for MCP App UI",
       inputSchema: {
         root: z.string(),
         file: z.string(),
@@ -233,6 +250,12 @@ export function createCleanArchMcpServer(): McpServer {
         title: args.title,
         imageMode: "inline",
       })
+      const key = panelKey(prepared.root, prepared.relFile)
+      let uiToken = panelTokens.get(key)
+      if (!uiToken) {
+        uiToken = randomBytes(16).toString("hex")
+        panelTokens.set(key, uiToken)
+      }
       return {
         content: [{ type: "text" as const, text: `Loaded ${prepared.relFile} rev ${prepared.page.revision}` }],
         structuredContent: {
@@ -245,6 +268,7 @@ export function createCleanArchMcpServer(): McpServer {
           diff: prepared.page.diff,
           previous: prepared.page.previous,
           draft: prepared.draft,
+          uiToken,
         },
       }
     },
@@ -255,7 +279,7 @@ export function createCleanArchMcpServer(): McpServer {
     server,
     "review_app_save_draft",
     {
-      description: "Persist review draft annotations and comment",
+      description: "[INTERNAL UI CALLBACK — DO NOT CALL FROM MODEL] Persist review draft annotations and comment",
       inputSchema: {
         root: z.string(),
         file: z.string(),
@@ -278,7 +302,7 @@ export function createCleanArchMcpServer(): McpServer {
     server,
     "review_app_submit",
     {
-      description: "Commit final review decision and return formatted summary",
+      description: "[INTERNAL UI CALLBACK — DO NOT CALL FROM MODEL] Commit final human review decision from MCP App UI",
       inputSchema: {
         root: z.string(),
         file: z.string(),
@@ -286,13 +310,29 @@ export function createCleanArchMcpServer(): McpServer {
         decision: z.enum(["approved", "approved_with_notes", "changes_requested"]),
         comment: z.string().default(""),
         annotations: z.array(z.any()).default([]),
+        uiToken: z.string().optional(),
       } as any,
       _meta: { ui: { visibility: ["app"] } },
     },
     async (args: any) => {
+      const resolved = resolveProjectFile(args.root, args.file)
+      const key = panelKey(resolved.root, resolved.relFile)
+      const expectedToken = panelTokens.get(key)
+      if (!expectedToken || !args.uiToken || args.uiToken !== expectedToken) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: "Refused: review decisions must be submitted by the human reviewer inside the UI panel, never called directly by the model.",
+            },
+          ],
+        }
+      }
+      panelTokens.delete(key)
       const outcome = await commitReviewDecision({
-        root: args.root,
-        file: args.file,
+        root: resolved.root,
+        file: resolved.relFile,
         revision: args.revision,
         decision: args.decision,
         comment: String(args.comment ?? ""),

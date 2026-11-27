@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ./dist/agy-hooks.js",
+            "command": "node \"${PLUGIN_ROOT}/dist/agy-hooks.js\"",
             "timeout": 5
           }
         ]

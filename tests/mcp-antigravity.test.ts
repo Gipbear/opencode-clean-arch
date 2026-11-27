@@ -23,7 +23,7 @@ describe("Antigravity plugin manifest & build artifacts", () => {
   test("plugin.json, mcp_config.json, hooks.json and built review-app.html are valid", () => {
     const pluginJson = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, "plugin.json"), "utf8"))
     expect(pluginJson.name).toBe("clean-arch")
-    expect(pluginJson.suggestedPrompts).toHaveLength(3)
+    expect(pluginJson.suggestedPrompts).toHaveLength(4)
 
     const mcpConfig = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, "mcp_config.json"), "utf8"))
     expect(mcpConfig.mcpServers["clean-arch"].command).toBe("node")
@@ -31,6 +31,7 @@ describe("Antigravity plugin manifest & build artifacts", () => {
 
     const hooksConfig = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, "hooks.json"), "utf8"))
     expect(hooksConfig["clean-arch-readonly-guard"].PreToolUse).toHaveLength(1)
+    expect(hooksConfig["clean-arch-readonly-guard"].PreToolUse[0].hooks[0].command).toContain("${PLUGIN_ROOT}/dist/agy-hooks.js")
 
     const appHtmlPath = path.join(DIST_DIR, "review-app.html")
     expect(existsSync(appHtmlPath)).toBe(true)
@@ -114,9 +115,11 @@ describe("MCP server & Antigravity MCP App integration", () => {
       })
       expect((reloaded.structuredContent as any).draft.comment).toBe("草稿意见")
       expect((reloaded.structuredContent as any).draft.annotations).toHaveLength(1)
+      const uiToken = (reloaded.structuredContent as any).uiToken
+      expect(typeof uiToken).toBe("string")
 
-      // 提交批准：保存记录并自动将工作流状态推进到 executing
-      const submitted = await client.callTool({
+      // 模型若不带有效 uiToken 直接盲调 review_app_submit 自批，必须被拒绝且保持只读锁
+      const forged = await client.callTool({
         name: "review_app_submit",
         arguments: {
           root: repo,
@@ -127,11 +130,58 @@ describe("MCP server & Antigravity MCP App integration", () => {
           annotations: [],
         },
       })
+      expect(forged.isError).toBe(true)
+      expect((await readWorkflowState(repo))?.phase).toBe("awaiting_approval")
+
+      // 携带 UI 下发的 uiToken 提交批准：保存记录并自动将工作流状态推进到 executing
+      const submitted = await client.callTool({
+        name: "review_app_submit",
+        arguments: {
+          root: repo,
+          file: ".clean-arch/plan.md",
+          revision: 1,
+          decision: "approved",
+          comment: "",
+          annotations: [],
+          uiToken,
+        },
+      })
       expect((submitted.structuredContent as any).decision).toBe("approved")
       expect((submitted.structuredContent as any).formatted).toContain("Decision: approved")
       expect((await readWorkflowState(repo))?.phase).toBe("executing")
     } finally {
       await Promise.all([client.close(), server.close()])
+    }
+  })
+
+  test("auto-falls back to HTTP open mode on non-UI MCP clients like Cursor", async () => {
+    process.env.CLEAN_ARCH_REVIEW_NO_OPEN = "1"
+    const server = createCleanArchMcpServer()
+    const cursorClient = new Client({ name: "cursor-vscode", version: "1.0.0" })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), cursorClient.connect(clientTransport)])
+    const repo = makeTempRepo()
+    mkdirSync(path.join(repo, ".clean-arch"), { recursive: true })
+    writeFileSync(path.join(repo, ".clean-arch", "plan.md"), "# Plan\n")
+    try {
+      const res = await cursorClient.callTool({ name: "clean_arch_review", arguments: { root: repo, path: ".clean-arch/plan.md" } })
+      const text = (res.content as any[])[0].text
+      expect(text).toContain("Review page is ready: http://")
+      const pageUrl = new URL(text.match(/https?:\/\/\S+/)![0])
+      const waitPromise = cursorClient.callTool({
+        name: "clean_arch_review",
+        arguments: { root: repo, path: ".clean-arch/plan.md", action: "wait" },
+      })
+      await fetch(`${pageUrl.origin}/api/decision`, {
+        method: "POST",
+        headers: { "x-review-token": pageUrl.searchParams.get("t")! },
+        body: JSON.stringify({ decision: "approved", comment: "lgtm", annotations: [] }),
+      })
+      const waited = await waitPromise
+      expect((waited.content as any[])[0].text).toContain("Decision: approved")
+      expect((await readWorkflowState(repo))?.phase).toBe("executing")
+    } finally {
+      await Promise.all([cursorClient.close(), server.close()])
     }
   })
 })
@@ -180,6 +230,30 @@ describe("Antigravity PreToolUse read-only guard", () => {
 
     // 批准后进入 executing 阶段放行源码编辑
     await writeWorkflowState(repo, "executing", ".clean-arch/plan.md")
+    expect(
+      (
+        await evaluatePreToolUse({
+          cwd: repo,
+          toolCall: { name: "edit_file", args: { Path: path.join(repo, "shop/core/pricing.py") } },
+        })
+      ).decision,
+    ).toBe("allow")
+
+    // Windows 盘符大小写差异不得绕过只读门禁，且陈旧超时状态自动失效不永久锁仓
+    await writeWorkflowState(repo, "awaiting_approval", ".clean-arch/plan.md")
+    if (process.platform === "win32" && /^[A-Za-z]:/.test(repo)) {
+      const flippedRoot = (repo[0] === repo[0].toLowerCase() ? repo[0].toUpperCase() : repo[0].toLowerCase()) + repo.slice(1)
+      const caseCheck = await evaluatePreToolUse({
+        cwd: flippedRoot,
+        toolCall: { name: "edit_file", args: { Path: path.join(repo, "shop/core/pricing.py") } },
+      })
+      expect(caseCheck.decision).toBe("deny")
+    }
+
+    writeFileSync(
+      path.join(repo, ".clean-arch", "state.json"),
+      JSON.stringify({ phase: "diagnose", doc: ".clean-arch/plan.md", updatedAt: "2020-01-01T00:00:00.000Z" }),
+    )
     expect(
       (
         await evaluatePreToolUse({

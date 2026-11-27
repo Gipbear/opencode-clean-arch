@@ -10,11 +10,23 @@ export interface WorkflowState {
 }
 
 const VALID_PHASES = new Set<WorkflowPhase>(["diagnose", "awaiting_approval", "executing", "done"])
+const DEFAULT_TTL_MINUTES = 240
+
+/** 跨平台安全判断 targetPath 是否位于 rootDir 内部（兼容 Windows 盘符大小写差异与跨盘符路径）。 */
+export function isPathInside(rootDir: string, targetPath: string, allowSame = false): boolean {
+  const base = path.resolve(rootDir)
+  const full = path.resolve(base, targetPath)
+  const normBase = process.platform === "win32" ? base.toLowerCase() : base
+  const normFull = process.platform === "win32" ? full.toLowerCase() : full
+  if (normBase === normFull) return allowSame
+  const rel = path.relative(normBase, normFull)
+  return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel)
+}
 
 function stateFilePath(root: string): string {
   const resolvedRoot = path.resolve(root)
   const target = path.resolve(resolvedRoot, ".clean-arch", "state.json")
-  if (!target.startsWith(resolvedRoot + path.sep)) {
+  if (!isPathInside(resolvedRoot, target)) {
     throw new Error("Invalid state file path outside workspace root")
   }
   return target
@@ -49,7 +61,18 @@ export async function writeWorkflowState(root: string, phase: WorkflowPhase, doc
   return state
 }
 
-/** 判断当前阶段是否处于批准前的只读保护期。 */
-export function isReadOnlyPhase(state: WorkflowState | null): boolean {
-  return state !== null && (state.phase === "diagnose" || state.phase === "awaiting_approval")
+/** 判断当前阶段是否处于有效的批准前只读保护期（超时陈旧状态自动失效，避免永久锁死工作区）。 */
+export function isReadOnlyPhase(state: WorkflowState | null, nowMs: number = Date.now()): boolean {
+  if (!state || (state.phase !== "diagnose" && state.phase !== "awaiting_approval")) {
+    return false
+  }
+  const ttlMinutes = Number(process.env.CLEAN_ARCH_STATE_TTL_MIN ?? DEFAULT_TTL_MINUTES)
+  const effectiveTtlMs = (Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : DEFAULT_TTL_MINUTES) * 60_000
+  if (state.updatedAt) {
+    const updatedMs = Date.parse(state.updatedAt)
+    if (Number.isFinite(updatedMs) && nowMs - updatedMs > effectiveTtlMs) {
+      return false
+    }
+  }
+  return true
 }

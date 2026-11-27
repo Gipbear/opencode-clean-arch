@@ -16,6 +16,7 @@
   "suggestedPrompts": [
     "/clean-arch 对当前仓库做完整架构诊断、两轮重构与文档沉淀",
     "/arch-diagnose 只读诊断当前仓库的主干脉络、隐式字典与层级违规",
-    "/arch-map 生成或更新 4+1 架构文档与自包含 SVG 图表"
+    "/arch-map 生成或更新 4+1 架构文档与自包含 SVG 图表",
+    "/perf-tune 基于火焰图与 Peak RSS 剖析优化耗时或内存占用"
   ]
 }
