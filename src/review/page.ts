@@ -74,7 +74,7 @@ export function renderPage(data: PageData): string {
 <div id="done" class="done" hidden>
   <div class="done-card">
     <h2 id="done-title">已提交</h2>
-    <p>评审结果已发送给 Agent，可以关闭此页面回到 opencode。</p>
+    <p>评审结果已发送给 Agent，可以关闭此页面回到对话窗口。</p>
   </div>
 </div>
 <div id="toast" class="toast" hidden></div>
@@ -490,7 +490,7 @@ const CLIENT = String.raw`
       $("done-title").textContent = "已提交：" + DECISION[decision];
       $("done").hidden = false;
     }).catch(function (error) {
-      toast("提交失败（" + error.message + "）。Agent 可能已停止等待，请回到 opencode 查看。");
+      toast("提交失败（" + error.message + "）。Agent 可能已停止等待，请回到对话窗口查看。");
     });
   }
 

@@ -1035,15 +1035,136 @@ def mermaid_classes(facts: dict, max_nodes: int, focus: str | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _strip_toml_comment(line: str) -> str:
+    """移除 TOML 单行中的非字符串注释。"""
+    quote = ""
+    escaped = False
+    for idx, ch in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quote == '"' and ch == "\\":
+            escaped = True
+            continue
+        if ch in ('"', "'"):
+            if quote == ch:
+                quote = ""
+            elif not quote:
+                quote = ch
+        elif ch == "#" and not quote:
+            return line[:idx]
+    return line
+
+
+def _split_toml_array(body: str) -> list[str]:
+    """按顶层逗号拆分 TOML 数组元素，保留引号与嵌套括号内的逗号。"""
+    items: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    escaped = False
+    depth = 0
+    for ch in body:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            continue
+        if quote == '"' and ch == "\\":
+            buf.append(ch)
+            escaped = True
+            continue
+        if ch in ('"', "'"):
+            if quote == ch:
+                quote = ""
+            elif not quote:
+                quote = ch
+            buf.append(ch)
+        elif not quote:
+            if ch == "[":
+                depth += 1
+                buf.append(ch)
+            elif ch == "]":
+                depth -= 1
+                buf.append(ch)
+            elif ch == "," and depth == 0:
+                token = "".join(buf).strip()
+                if token:
+                    items.append(token)
+                buf.clear()
+            else:
+                buf.append(ch)
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _parse_toml_value(raw: str):
+    """解析规则文件中用到的 TOML 基础值（字符串、布尔、整数、数组）。"""
+    val = raw.strip()
+    if val == "true":
+        return True
+    if val == "false":
+        return False
+    if val.startswith("[") and val.endswith("]"):
+        return [_parse_toml_value(item) for item in _split_toml_array(val[1:-1])]
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        return ast.literal_eval(val)
+    if re.fullmatch(r"[+-]?\d+", val):
+        return int(val)
+    if re.fullmatch(r"[+-]?\d+\.\d+", val):
+        return float(val)
+    raise ValueError(f"Unsupported TOML value: {raw}")
+
+
+def _parse_toml_fallback(text: str) -> dict:
+    """面向 Python < 3.11 的标准库 TOML 子集解析器，支持规则表、数组表与多行数组。"""
+    root: dict = {}
+    current: dict = root
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        cleaned = _strip_toml_comment(lines[i]).strip()
+        i += 1
+        if not cleaned:
+            continue
+        if cleaned.startswith("[[") and cleaned.endswith("]]"):
+            key = cleaned[2:-2].strip()
+            arr = root.setdefault(key, [])
+            item: dict = {}
+            arr.append(item)
+            current = item
+            continue
+        if cleaned.startswith("[") and cleaned.endswith("]"):
+            key = cleaned[1:-1].strip()
+            current = root.setdefault(key, {})
+            continue
+        if "=" not in cleaned:
+            raise ValueError(f"Invalid TOML line: {cleaned}")
+        key, val = cleaned.split("=", 1)
+        key = key.strip().strip('"').strip("'")
+        val = val.strip()
+        # 多行数组：仅统计引号外的中括号平衡，直到闭合为止
+        while val.startswith("[") and not val.endswith("]") and i < len(lines):
+            next_part = _strip_toml_comment(lines[i]).strip()
+            i += 1
+            if next_part:
+                val = f"{val} {next_part}"
+        current[key] = _parse_toml_value(val)
+    return root
+
+
 def load_rules(path: Path) -> dict:
+    """读取 rules.json 或 rules.toml；在 Python < 3.11 时自动使用内置 TOML 解析器。"""
     text = path.read_text(encoding="utf-8", errors="replace")
     if path.suffix == ".json":
         return json.loads(text)
     try:
         import tomllib
+        return tomllib.loads(text)
     except ModuleNotFoundError:
-        sys.exit("rules.toml needs Python 3.11+ (tomllib); or write the same structure as rules.json")
-    return tomllib.loads(text)
+        return _parse_toml_fallback(text)
 
 
 def matches(name: str, patterns: list[str]) -> bool:

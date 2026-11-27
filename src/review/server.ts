@@ -1,19 +1,24 @@
 import { spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import os from "node:os"
-import path from "node:path"
-import { diffLines } from "./diff.ts"
-import { renderMarkdown } from "./markdown.ts"
-import { renderPage, type PageData } from "./page.ts"
-import type { Annotation, Decision, ReviewOutcome } from "./types.ts"
+import { renderPage } from "./page.ts"
+import {
+  commitReviewDecision,
+  formatOutcome,
+  parseDecision,
+  prepareReviewDocument,
+  readSafeProjectImage,
+} from "./store.ts"
+import type { Annotation, ReviewOutcome } from "./types.ts"
+
+export { formatOutcome }
 
 export interface ReviewOptions {
-  /** Project root; the reviewed file and served images must be inside it. */
+  /** 项目根目录；评审文档与服务内静态图片必须位于此目录内。 */
   root: string
-  /** Markdown file to review, absolute or relative to `root`. */
+  /** 待评审的 Markdown 文件路径（绝对路径或相对 root 的路径）。 */
   file: string
   title?: string
   host?: string
@@ -22,16 +27,6 @@ export interface ReviewOptions {
   openBrowser?: boolean
   signal?: AbortSignal
   onReady?: (url: string) => void
-}
-
-const DECISIONS: Decision[] = ["approved", "approved_with_notes", "changes_requested"]
-const IMAGE_TYPES: Record<string, string> = {
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
 }
 
 export function reviewSettingsFromEnv(env: NodeJS.ProcessEnv = process.env) {
@@ -45,12 +40,7 @@ export function reviewSettingsFromEnv(env: NodeJS.ProcessEnv = process.env) {
   }
 }
 
-/**
- * Serve a Markdown document for review and resolve when the reviewer decides.
- *
- * Every review is archived under `.clean-arch/reviews/<doc>/` as `rN.md` (the reviewed text) and
- * `rN.json` (the feedback), so the next round can show a diff and the previous feedback.
- */
+/** 启动 Markdown 评审页并等待用户提交结论或超时/取消。 */
 export async function runReview(options: ReviewOptions): Promise<ReviewOutcome> {
   const session = await startReview(options)
   const onAbort = () => session.cancel()
@@ -66,42 +56,24 @@ export async function runReview(options: ReviewOptions): Promise<ReviewOutcome> 
 export interface ReviewSession {
   url: string
   revision: number
-  /** Resolves once the reviewer decides, the timeout passes or `cancel()` is called. */
+  /** 当评审提交、超时或调用 cancel() 时结束。 */
   outcome: Promise<ReviewOutcome>
   cancel(): void
 }
 
-/** Start serving the page and return as soon as it is reachable; `outcome` settles later. */
+/** 启动本地 HTTP 评审服务并立即可访问；评审结论通过 `outcome` 异步返回。 */
 export async function startReview(options: Omit<ReviewOptions, "signal">): Promise<ReviewSession> {
-  const root = path.resolve(options.root)
-  const file = path.resolve(root, options.file)
-  const relFile = path.relative(root, file)
-  if (relFile.startsWith("..") || path.isAbsolute(relFile)) throw new Error(`${options.file} is outside ${root}`)
-  const markdown = await readFile(file, "utf8")
   const settings = reviewSettingsFromEnv()
   const host = options.host ?? settings.host
   const token = randomBytes(12).toString("hex")
-
-  const historyDir = path.join(root, ".clean-arch", "reviews", path.basename(file).replace(/\.[^.]+$/, ""))
-  await mkdir(historyDir, { recursive: true })
-  // Rounds that ended without a decision (timeout, cancel, killed process) are reused.
-  const last = (await readHistory(historyDir)).filter((entry) => entry.feedback).at(-1)
-  const revision = (last?.revision ?? 0) + 1
-  await writeFile(path.join(historyDir, `r${revision}.md`), markdown)
-
-  const diagramNotes: string[] = []
-  const page: PageData = {
-    title: options.title || firstHeading(markdown) || path.basename(file),
-    file: relFile.split(path.sep).join("/"),
-    revision,
+  const prepared = await prepareReviewDocument({
+    root: options.root,
+    file: options.file,
+    title: options.title,
     token,
-    html: renderMarkdown(markdown, path.posix.dirname(relFile.split(path.sep).join("/")), token, diagramNotes),
-    diff: last?.markdown !== undefined ? diffLines(last.markdown, markdown) : null,
-    previous: last?.feedback
-      ? { revision: last.revision, decision: last.feedback.decision, comment: last.feedback.comment, annotations: last.feedback.annotations }
-      : null,
-  }
-  const html = renderPage(page)
+    imageMode: "http",
+  })
+  const html = renderPage(prepared.page)
 
   let settle: (outcome: { decision: ReviewOutcome["decision"]; comment: string; annotations: Annotation[] }) => void
   const decided = new Promise<{ decision: ReviewOutcome["decision"]; comment: string; annotations: Annotation[] }>(
@@ -117,7 +89,13 @@ export async function startReview(options: Omit<ReviewOptions, "signal">): Promi
     const authorized = url.searchParams.get("t") === token || req.headers["x-review-token"] === token
     if (!authorized) return send(res, 403, "text/plain", "Missing or wrong review token. Open the link printed by the agent.")
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, "text/html; charset=utf-8", html)
-    if (req.method === "GET" && url.pathname.startsWith("/file/")) return serveImage(res, root, decodeURIComponent(url.pathname.slice(6)))
+    if (req.method === "GET" && url.pathname.startsWith("/file/")) {
+      const img = await readSafeProjectImage(prepared.root, decodeURIComponent(url.pathname.slice(6)))
+      if (!img) return send(res, 404, "text/plain", "not found")
+      res.writeHead(200, { "content-type": img.type, "cache-control": "no-store", "content-security-policy": "script-src 'none'" })
+      res.end(img.body)
+      return
+    }
     if (req.method === "POST" && url.pathname === "/api/decision") {
       const body = parseDecision(await readBody(req))
       if (!body) return send(res, 400, "text/plain", "invalid decision")
@@ -145,73 +123,23 @@ export async function startReview(options: Omit<ReviewOptions, "signal">): Promi
     clearTimeout(timer)
     server.closeAllConnections?.()
     server.close()
-    const recordPath = path.join(historyDir, `r${revision}.json`)
-    await writeFile(recordPath, JSON.stringify({ ...result, revision, file: page.file, at: new Date().toISOString() }, null, 2) + "\n")
-    return { ...result, revision, record: path.relative(root, recordPath).split(path.sep).join("/"), url, diagramWarnings: diagramNotes }
+    return commitReviewDecision({
+      root: prepared.root,
+      file: prepared.relFile,
+      revision: prepared.page.revision,
+      decision: result.decision,
+      comment: result.comment,
+      annotations: result.annotations,
+      diagramWarnings: prepared.diagramWarnings,
+      url,
+    })
   })
-  return { url, revision, outcome, cancel: () => settle({ decision: "cancelled", comment: "", annotations: [] }) }
-}
-
-interface HistoryEntry {
-  revision: number
-  markdown?: string
-  feedback?: { decision: Decision; comment: string; annotations: Annotation[] }
-}
-
-async function readHistory(dir: string): Promise<HistoryEntry[]> {
-  const entries = new Map<number, HistoryEntry>()
-  for (const name of await readdir(dir)) {
-    const match = name.match(/^r(\d+)\.(md|json)$/)
-    if (!match) continue
-    const revision = Number(match[1])
-    const entry = entries.get(revision) ?? { revision }
-    const text = await readFile(path.join(dir, name), "utf8")
-    if (match[2] === "md") entry.markdown = text
-    else {
-      try {
-        const feedback = JSON.parse(text)
-        if (DECISIONS.includes(feedback.decision)) entry.feedback = feedback
-      } catch {
-        // A half-written record only loses the "previous feedback" panel.
-      }
-    }
-    entries.set(revision, entry)
-  }
-  return [...entries.values()].sort((a, b) => a.revision - b.revision)
-}
-
-function parseDecision(raw: string): { decision: Decision; comment: string; annotations: Annotation[] } | null {
-  let body: any
-  try {
-    body = JSON.parse(raw)
-  } catch {
-    return null
-  }
-  if (!DECISIONS.includes(body?.decision)) return null
-  const kinds = new Set(["comment", "delete", "replace"])
-  const annotations: Annotation[] = (Array.isArray(body.annotations) ? body.annotations : [])
-    .filter((a: any) => a && kinds.has(a.kind) && typeof a.quote === "string")
-    .map((a: any) => ({ kind: a.kind, quote: a.quote, section: String(a.section ?? ""), text: String(a.text ?? "") }))
-  return { decision: body.decision, comment: String(body.comment ?? ""), annotations }
-}
-
-async function serveImage(res: ServerResponse, root: string, relPath: string) {
-  const full = path.resolve(root, relPath)
-  const type = IMAGE_TYPES[path.extname(full).toLowerCase()]
-  const rel = path.relative(root, full)
-  if (!type || rel.startsWith("..") || path.isAbsolute(rel)) return send(res, 404, "text/plain", "not found")
-  try {
-    const body = await readFile(full)
-    res.writeHead(200, { "content-type": type, "cache-control": "no-store", "content-security-policy": "script-src 'none'" })
-    res.end(body)
-  } catch {
-    send(res, 404, "text/plain", "not found")
-  }
+  return { url, revision: prepared.page.revision, outcome, cancel: () => settle({ decision: "cancelled", comment: "", annotations: [] }) }
 }
 
 function send(res: ServerResponse, status: number, type: string, body: string) {
   if (res.headersSent) return
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store" })
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" })
   res.end(body)
 }
 
@@ -229,10 +157,6 @@ function readBody(req: IncomingMessage): Promise<string> {
   })
 }
 
-function firstHeading(markdown: string): string {
-  return markdown.match(/^#\s+(.+)$/m)?.[1].trim() ?? ""
-}
-
 function openInBrowser(url: string) {
   const platform = process.platform
   const hasDisplay = platform !== "linux" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)
@@ -244,37 +168,6 @@ function openInBrowser(url: string) {
     child.on("error", () => {})
     child.unref()
   } catch {
-    // Opening a browser is a convenience; the URL is reported to the agent either way.
+    // 浏览器打开失败不影响 Agent 输出 URL
   }
-}
-
-export function formatOutcome(outcome: ReviewOutcome): string {
-  const lines = [`Decision: ${outcome.decision}`, `Revision: ${outcome.revision} (feedback saved to ${outcome.record})`]
-  if (outcome.decision === "timeout" || outcome.decision === "cancelled") {
-    lines.push("", "No decision was made in the review page. Ask the user in chat to review the file and approve or give feedback.")
-    return lines.join("\n")
-  }
-  if (outcome.comment) lines.push("", "General comment:", outcome.comment)
-  if (outcome.diagramWarnings?.length) {
-    lines.push("", "Diagram rendering warnings (fix them in this document):", ...outcome.diagramWarnings.map((w) => `- ${w}`))
-  }
-  if (outcome.annotations.length) {
-    lines.push("", `Annotations (${outcome.annotations.length}):`)
-    outcome.annotations.forEach((a, i) => {
-      const where = a.section ? ` in "${a.section}"` : ""
-      const quote = JSON.stringify(a.quote)
-      if (a.kind === "replace") lines.push(`${i + 1}. [replace]${where}: ${quote} -> ${JSON.stringify(a.text)}`)
-      else if (a.kind === "delete") lines.push(`${i + 1}. [delete]${where}: ${quote}`)
-      else lines.push(`${i + 1}. [comment]${where}: ${quote}`, `   ${a.text}`)
-    })
-  }
-  lines.push(
-    "",
-    outcome.decision === "changes_requested"
-      ? "Next: apply every annotation (edit only what the feedback touches), then call clean_arch_review again."
-      : outcome.decision === "approved_with_notes"
-        ? "Next: apply the notes that do not change scope, then continue with the approved plan."
-        : "Next: the document is approved; continue.",
-  )
-  return lines.join("\n")
 }

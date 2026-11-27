@@ -64,6 +64,8 @@ Run every check, fix what fails, and re-run until clean.
 
 ## Report
 
+If `.clean-arch/state.json` exists and all checks pass, update it to `{"phase": "done"}`.
+
 Write `.clean-arch/finish-report.md` and present the concise summary table:
 
 ```markdown

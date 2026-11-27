@@ -123,9 +123,9 @@ Rules for steps and diagrams:
 
 ## Review loop
 
-1. Call `clean_arch_review` with `path: ".clean-arch/plan.md"` and a clear `title` (include
-   `Round 1` or `Round 2`). Show the returned URL to the user in your reply, then immediately
-   call `clean_arch_review` again with the same `path` and `action: "wait"`.
+1. Submit `.clean-arch/plan.md` via `clean_arch_review` with a clear `title` (include `Round 1` or `Round 2`, and pass `root` when calling over MCP):
+   - **MCP App hosts (Antigravity side pane)**: call `clean_arch_review` with `action: "panel"` (default), then stop editing and wait for the reviewer's submitted decision message.
+   - **HTTP browser hosts (opencode / CLI / non-UI MCP)**: call `clean_arch_review` with `action: "open"`, show the returned URL to the user in your reply, then immediately call `clean_arch_review` again with the same `path` and `action: "wait"`.
 2. Handle the decision:
    - `approved`: archive to `.clean-arch/plans/<YYYY-MM-DD>-r<1|2>-<slug>.md` and execute the
      round's steps.

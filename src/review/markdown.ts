@@ -1,22 +1,60 @@
+import { readFileSync } from "node:fs"
 import path from "node:path"
 import { Marked, type Tokens } from "marked"
 import { diagramWarnings, mermaidToSvg } from "../render.ts"
 
 const SAFE_TAG = /^<\/?(sub|sup|br|kbd|b|i|em|strong|code|details|summary|p|hr)\s*\/?>$/i
+const INLINE_IMAGE_TYPES: Record<string, string> = {
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+}
+const MAX_INLINE_IMAGE_BYTES = 1_500_000
 
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }
 
+export interface RenderMarkdownOptions {
+  /** HTTP 模式下通过 `/file/` 路由加载图片；inline 模式将本地图片内联为 data URI（适用于 MCP App 隔离 iframe）。 */
+  imageMode?: "http" | "inline"
+  /** inline 模式下用于安全解析本地图片路径的仓库根目录。 */
+  rootDir?: string
+}
+
+function tryInlineLocalImage(rootDir: string, docDir: string, href: string): string | null {
+  const resolvedRoot = path.resolve(rootDir)
+  const rel = path.posix.normalize(path.posix.join(docDir, href))
+  const full = path.resolve(resolvedRoot, rel)
+  const mime = INLINE_IMAGE_TYPES[path.extname(full).toLowerCase()]
+  if (!mime || !full.startsWith(resolvedRoot + path.sep)) return null
+  try {
+    const buf = readFileSync(full)
+    if (buf.byteLength > MAX_INLINE_IMAGE_BYTES) return null
+    return `data:${mime};base64,${buf.toString("base64")}`
+  } catch {
+    return null
+  }
+}
+
 /**
- * Render review Markdown to HTML.
+ * 将评审 Markdown 渲染为 HTML。
  *
- * Mermaid fences become inline SVG, relative images are served through `/file/` from the
- * project root, and raw HTML is escaped except for a few attribute-free formatting tags.
- * Renderer warnings for each diagram are appended to `warnings`.
+ * Mermaid 代码块转为内联 SVG；相对路径图片在 HTTP 模式下通过 `/file/` 提供，在 inline 模式下转为 data URI；
+ * 除少量无属性格式标签外，其余原始 HTML 均做转义处理。各图表渲染警告追加至 `warnings`。
  */
-export function renderMarkdown(markdown: string, docDir: string, token: string, warnings: string[] = []): string {
+export function renderMarkdown(
+  markdown: string,
+  docDir: string,
+  token: string,
+  warnings: string[] = [],
+  options: RenderMarkdownOptions = {},
+): string {
   const marked = new Marked({ gfm: true })
+  const imageMode = options.imageMode ?? "http"
   marked.use({
     renderer: {
       code({ text, lang }: Tokens.Code) {
@@ -38,10 +76,16 @@ export function renderMarkdown(markdown: string, docDir: string, token: string, 
         return parts.map((part) => (part.startsWith("<") && SAFE_TAG.test(part) ? part : escapeHtml(part))).join("")
       },
       image({ href, title, text }: Tokens.Image) {
-        const src = /^(https?:|data:)/.test(href)
-          ? href
-          : `/file/${encodeURI(path.posix.normalize(path.posix.join(docDir, href)))}?t=${token}`
+        let src: string
+        if (/^(https?:|data:)/.test(href)) {
+          src = href
+        } else if (imageMode === "inline" && options.rootDir) {
+          src = tryInlineLocalImage(options.rootDir, docDir, href) ?? ""
+        } else {
+          src = `/file/${encodeURI(path.posix.normalize(path.posix.join(docDir, href)))}?t=${token}`
+        }
         const titleAttr = title ? ` title="${escapeHtml(title)}"` : ""
+        if (!src) return `<span class="local-link">[图片无法内联: ${escapeHtml(text || href)}]</span>`
         return `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${titleAttr}>`
       },
       link({ href, title, tokens }: Tokens.Link) {

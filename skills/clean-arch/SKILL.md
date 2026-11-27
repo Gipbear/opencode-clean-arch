@@ -93,9 +93,11 @@ the user asks.
 |---|---|
 | `clean_arch_facts` | Deterministic facts + architectural signals: modules, cycles, `data_models`, `architecture_signals` (tangled orchestrators, repeated dict shapes, weak dict boundaries, impure shared/core modules, scattered I/O, grab-bags, single-impl ABCs), duplicates, hotspots, draft Mermaid, `importers` and diagram `verify` |
 | `clean_arch_leftovers` | Hygiene scan: parallel versions, duplicates, broken imports, compat shims, commented code, debug output, narrative comments, unreferenced symbols |
-| `clean_arch_review` | `action: "open"` starts the browser review page and returns its URL (show it to the user); `action: "wait"` blocks until the user approves or requests changes |
+| `clean_arch_review` | Opens interactive review: `action: "panel"` (default in Antigravity/MCP App hosts) opens the side-pane review UI without blocking and returns feedback as a chat message; `action: "open"` + `action: "wait"` serves a local browser page for HTTP-only hosts |
 | `clean_arch_render` | Renders `*.mmd` diagrams to self-contained SVG for code hosts that do not render Mermaid |
 | `clean_arch_perf` | Used by `perf-tune`: environment/profiler probe, automated CPU/memory/import profiling with self-contained flame-graph SVGs, repeated benchmark with OS Peak RSS & comparison SVG, static slow-pattern scan, and lessons store |
+
+When calling these tools over MCP (for example in Antigravity, where the server prefix may appear on the tool name), pass `root` set to the target repository's absolute path.
 
 If the tools are not registered, run the scripts directly from this skill's directory:
 `python3 scripts/arch_facts.py --root <repo> summary` and
@@ -116,7 +118,9 @@ any codebase with structural issues runs in **two distinct plan-and-execute roun
 
 - Scope is the whole repository unless the user named a subsystem (`$ARGUMENTS` of `/clean-arch`,
   or the request).
-- Make sure `.clean-arch/` is ignored locally before writing any file there.
+- Make sure `.clean-arch/` is ignored locally before writing any file there, then write
+  `.clean-arch/state.json` with `{"phase": "diagnose"}` so lifecycle hooks enforce read-only
+  discipline during diagnosis and planning.
 - Find the test command (project instructions first, then pytest config, `tests/`, Makefile, CI
   files, README). Run it once with `PYTHONDONTWRITEBYTECODE=1` so read-only phases leave no
   `__pycache__` behind. Record pass/fail as the baseline.

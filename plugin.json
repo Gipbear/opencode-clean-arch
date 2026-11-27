@@ -1,0 +1,21 @@
+{
+  "name": "clean-arch",
+  "displayName": "Clean Arch",
+  "version": "0.3.2",
+  "description": "Turn agent-grown Python code into a readable architecture with an explicit spine, dataclass contracts, flat 3-layer modules, interactive side-pane review, leftover gates, and 4+1 SVG docs.",
+  "logo": "assets/logo.svg",
+  "author": {
+    "name": "Gipbear",
+    "url": "https://github.com/Gipbear"
+  },
+  "homepage": "https://github.com/Gipbear/opencode-clean-arch#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gipbear/opencode-clean-arch.git"
+  },
+  "suggestedPrompts": [
+    "/clean-arch 对当前仓库做完整架构诊断、两轮重构与文档沉淀",
+    "/arch-diagnose 只读诊断当前仓库的主干脉络、隐式字典与层级违规",
+    "/arch-map 生成或更新 4+1 架构文档与自包含 SVG 图表"
+  ]
+}

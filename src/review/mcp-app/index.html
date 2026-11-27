@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>架构方案评审</title>
+<style>
+:root {
+  --bg: var(--color-background-secondary, #f7f7f8);
+  --panel: var(--color-background-primary, #ffffff);
+  --panel-alt: var(--color-background-tertiary, #f2f4f6);
+  --fg: var(--color-text-primary, #1f2328);
+  --muted: var(--color-text-secondary, #656d76);
+  --line: var(--color-border-primary, #e3e5e8);
+  --accent: var(--color-background-info, #0f766e);
+  --accent-fg: var(--color-text-inverse, #ffffff);
+  --danger: var(--color-text-danger, #c2410c);
+  --comment: #2563eb;
+  --delete: #dc2626;
+  --replace: #d97706;
+  font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-size: 14px; }
+.topbar {
+  position: sticky; top: 0; z-index: 10; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.title { flex: 1 1 200px; min-width: 0; }
+.title h1 { margin: 0; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.tabs { display: flex; gap: 4px; }
+.tab {
+  border: 0; background: none; padding: 5px 10px; border-radius: 6px;
+  color: var(--muted); cursor: pointer; font: inherit; font-size: 13px;
+}
+.tab.active { background: var(--panel-alt); color: var(--fg); font-weight: 600; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  padding: 6px 11px; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.btn:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary { background: #0f766e; border-color: #0f766e; color: #ffffff; }
+.btn.danger { color: var(--danger); border-color: rgba(194, 65, 12, 0.45); }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 14px; padding: 14px; }
+.pane { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; min-width: 0; }
+.hint {
+  margin: 0 0 14px; padding: 8px 10px; background: rgba(15, 118, 110, 0.08);
+  border-radius: 6px; font-size: 12px; color: var(--fg);
+}
+.sidebar {
+  position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 80px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+}
+.sidebar h2 { margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.count { background: var(--panel-alt); border-radius: 10px; padding: 0 8px; font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; }
+.annotations { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.annotation { border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 12px; cursor: pointer; }
+.annotation.flash { outline: 2px solid #0f766e; }
+.annotation header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; color: #fff; }
+.badge.comment { background: var(--comment); }
+.badge.delete { background: var(--delete); }
+.badge.replace { background: var(--replace); }
+.section { color: var(--muted); font-size: 11px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.remove { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; }
+.quote { margin: 0; padding-left: 8px; border-left: 3px solid var(--line); color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+.annotation .text { margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.general { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 13px; font-weight: 600; }
+textarea {
+  width: 100%; font: inherit; font-size: 13px; padding: 8px; border: 1px solid var(--line);
+  border-radius: 6px; resize: vertical; background: var(--panel); color: var(--fg);
+}
+textarea:focus { outline: 2px solid rgba(15, 118, 110, 0.35); border-color: #0f766e; }
+.markdown { line-height: 1.65; font-size: 14px; word-wrap: break-word; }
+.markdown h1, .markdown h2, .markdown h3 { line-height: 1.3; margin: 1.2em 0 0.5em; }
+.markdown h1 { font-size: 1.45em; }
+.markdown h2 { font-size: 1.2em; padding-bottom: 0.25em; border-bottom: 1px solid var(--line); }
+.markdown h3 { font-size: 1.05em; }
+.markdown code { background: var(--panel-alt); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+.markdown pre { background: var(--panel-alt); padding: 10px 12px; border-radius: 8px; overflow: auto; }
+.markdown pre code { background: none; padding: 0; }
+.markdown table { border-collapse: collapse; display: block; overflow: auto; margin: 0.8em 0; }
+.markdown th, .markdown td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+.markdown th { background: var(--panel-alt); }
+.markdown blockquote { margin: 0.8em 0; padding: 0 0.8em; color: var(--muted); border-left: 3px solid var(--line); }
+.markdown img, .diagram svg { max-width: 100%; height: auto; background: #fff; border-radius: 6px; }
+.diagram { margin: 0.8em 0; text-align: center; overflow: auto; }
+.diagram-error { color: var(--danger); font-size: 13px; }
+.local-link { color: #0f766e; border-bottom: 1px dotted #0f766e; }
+mark.ann { border-radius: 2px; cursor: pointer; color: #1f2328; }
+mark.ann-comment { background: #dbeafe; }
+mark.ann-delete { background: #fee2e2; text-decoration: line-through; }
+mark.ann-replace { background: #fef3c7; }
+.toolbar {
+  position: absolute; z-index: 20; transform: translateX(-50%); display: flex; background: #1f2328;
+  border-radius: 8px; padding: 3px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.toolbar button { border: 0; background: none; color: #fff; padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; border-radius: 6px; }
+.toolbar button:hover { background: #3a4048; }
+.popover {
+  position: absolute; z-index: 21; width: min(340px, 90vw); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+}
+.popover-quote { font-size: 12px; color: var(--muted); max-height: 70px; overflow: auto; margin-bottom: 6px; white-space: pre-wrap; }
+.popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.diff { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.diff div { padding: 0 8px; }
+.diff .add { background: rgba(34, 197, 94, 0.16); }
+.diff .del { background: rgba(239, 68, 68, 0.16); text-decoration: line-through; }
+.diff .gap { color: var(--muted); background: var(--panel-alt); text-align: center; font-family: inherit; }
+.previous { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-top: 12px; font-size: 12px; }
+.previous summary { cursor: pointer; font-weight: 600; }
+.previous ol { padding-left: 16px; }
+.empty-state {
+  max-width: 520px; margin: 48px auto; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 24px; text-align: center;
+}
+.empty-state h2 { margin: 0 0 8px; font-size: 16px; }
+.empty-state p { color: var(--muted); margin: 6px 0; line-height: 1.6; }
+.done-banner {
+  margin: 10px 14px 0; padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(15, 118, 110, 0.35);
+  background: rgba(15, 118, 110, 0.1); font-size: 13px;
+}
+.toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #1f2328; color: #fff;
+  padding: 7px 14px; border-radius: 8px; font-size: 13px; z-index: 60;
+}
+[hidden] { display: none !important; }
+@media (max-width: 780px) {
+  .layout { grid-template-columns: 1fr; padding: 10px; }
+  .pane { padding: 14px; }
+  .sidebar { position: static; max-height: none; }
+}
+</style>
+</head>
+<body>
+<div id="app-shell">
+  <header class="topbar" id="topbar" hidden>
+    <div class="title">
+      <h1 id="doc-title">架构方案评审</h1>
+      <div class="meta" id="doc-meta"></div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="doc">文档</button>
+      <button class="tab" data-tab="diff" id="tab-diff" hidden>与上一版差异 <span id="diff-stats"></span></button>
+    </nav>
+    <div class="actions">
+      <button class="btn danger" data-decision="changes_requested">要求修改</button>
+      <button class="btn" data-decision="approved_with_notes">批准并附意见</button>
+      <button class="btn primary" data-decision="approved">批准</button>
+    </div>
+  </header>
+
+  <div id="done-banner" class="done-banner" hidden></div>
+
+  <div id="empty-view" class="empty-state">
+    <h2 id="empty-title">等待加载评审文档…</h2>
+    <p id="empty-desc">请在对话中使用 /clean-arch、/arch-plan 或 /arch-review 打开待审阅的 Markdown 文档。</p>
+  </div>
+
+  <main class="layout" id="main-layout" hidden>
+    <section class="pane" id="pane-doc">
+      <p class="hint">选中文档任意文字可添加<b>评论</b>、<b>删除</b>或<b>替换</b>建议；右侧填写总体意见后点击顶部结论按钮，结果会自动发回当前对话。</p>
+      <article id="doc" class="markdown"></article>
+    </section>
+    <section class="pane" id="pane-diff" hidden>
+      <div id="diff" class="diff"></div>
+    </section>
+    <aside class="sidebar">
+      <h2>批注 <span id="count" class="count">0</span></h2>
+      <p id="empty" class="empty">还没有批注。在文档中选中文字开始。</p>
+      <ol id="annotations" class="annotations"></ol>
+      <label class="general">
+        <span>总体意见</span>
+        <textarea id="comment" rows="5" placeholder="对整份方案的意见（可选）"></textarea>
+      </label>
+      <div id="previous"></div>
+    </aside>
+  </main>
+</div>
+
+<div id="toolbar" class="toolbar" hidden>
+  <button data-kind="comment">评论</button>
+  <button data-kind="delete">删除</button>
+  <button data-kind="replace">替换</button>
+</div>
+<div id="popover" class="popover" hidden>
+  <div class="popover-quote" id="popover-quote"></div>
+  <textarea id="popover-text" rows="4"></textarea>
+  <div class="popover-actions">
+    <button class="btn" id="popover-cancel">取消</button>
+    <button class="btn primary" id="popover-save">添加</button>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="./app.ts"></script>
+</body>
+</html>

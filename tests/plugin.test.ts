@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { cpSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import plugin from "../src/index.ts"
 import { diagramWarnings, flattenSvg, mermaidToSvg, renderDiagrams } from "../src/render.ts"
 import { loadSkills, parseSkill } from "../src/skills.ts"
-import { SKILLS_DIR } from "../src/paths.ts"
+import { SKILLS_DIR, PACKAGE_ROOT } from "../src/paths.ts"
 
-const FIXTURE = path.join(import.meta.dir, "fixtures", "sample_repo")
+const FIXTURE = path.join(PACKAGE_ROOT, "tests", "fixtures", "sample_repo")
 
 function fixtureCopy(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "clean-arch-"))
@@ -22,6 +23,7 @@ describe("skills", () => {
       "arch-diagnose",
       "arch-map",
       "arch-plan",
+      "arch-review",
       "clean-arch",
       "clean-finish",
       "comment-hygiene",
@@ -74,7 +76,7 @@ describe("opencode 2.x setup()", () => {
 
   test("registers skills, commands and tools", async () => {
     const { added } = await setup(fixtureCopy())
-    expect(added.skill).toHaveLength(9)
+    expect(added.skill).toHaveLength(10)
     expect(added.skill[0].path.startsWith(SKILLS_DIR)).toBe(true)
     expect(added.command.map((c) => c.name)).toEqual(["clean-arch", "arch-diagnose", "arch-map", "clean-finish", "perf-tune", "arch-review"])
     expect(added.tool.map((t) => t.name)).toEqual(["clean_arch_facts", "clean_arch_leftovers", "clean_arch_render", "clean_arch_review", "clean_arch_perf"])

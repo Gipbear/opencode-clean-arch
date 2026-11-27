@@ -45,11 +45,42 @@
 
 ## 安装
 
-前置条件：opencode ≥ 1.16 或 2.x；Python ≥ 3.10（分层规则检查需要 3.11+ 的 `tomllib`）。分析脚本只用标准库。
+前置条件：Node.js ≥ 18（用于 Antigravity / 通用 MCP / CLI）或 opencode ≥ 1.16；Python ≥ 3.10（分析脚本只用标准库，已内置 `rules.toml` 与 `rules.json` 解析）。
 
-插件只用到 1.x 插件包里的 `tool` 辅助函数，该接口在 1.16 与 1.19 之间没有变化。skill 通过配置项 `skills.paths` 注册；如果你的 opencode 较老、装好后看不到 skill，把 `skills/` 下的目录复制到项目的 `.opencode/skills/` 即可（见下文“只用 skill，不装插件”）。
+### Antigravity（深度原生插件）
 
-### opencode 1.x
+包含 `plugin.json`、`mcp_config.json`（MCP 工具 + 侧边栏交互式评审 **MCP App**）、`hooks.json`（诊断/待批阶段 `PreToolUse` 只读护栏）、`rules/AGENTS.md` 与全部 Skill（含 `/arch-review`）：
+
+```bash
+npm install && npm run build
+# 全局启用（推荐）：软链接到 Antigravity 全局插件目录
+ln -s "$(pwd)" ~/.gemini/config/plugins/clean-arch
+```
+
+或在目标仓库的 `.agents/plugins.json` 中按项目启用：
+
+```json
+{ "entries": [{ "path": "/path/to/opencode-clean-arch" }] }
+```
+
+### 通用 MCP 客户端（Claude Code / Cursor / Codex 等）
+
+1. 构建一次：`npm install && npm run build`
+2. 把 `skills/` 复制或链接到客户端对应的 skills 目录（如 `.agents/skills/` 或 `.claude/skills/`）；
+3. 在客户端 MCP 配置中挂载 Stdio Server：
+
+```json
+{
+  "mcpServers": {
+    "clean-arch": {
+      "command": "node",
+      "args": ["/path/to/opencode-clean-arch/dist/mcp.js"]
+    }
+  }
+}
+```
+
+### opencode 1.x / 2.x
 
 ```bash
 # 安装到当前项目（写入 .opencode/opencode.json），加 -g 安装到全局
@@ -155,11 +186,12 @@ Agent 不会自己 `git commit` 或 `git push`：重构的改动和 `docs/archit
 
 ## 命令行
 
-不经过 opencode 也可以使用（需要 [bun](https://bun.sh)）：
+不经过宿主客户端也可以使用（支持 Node ≥ 18 或 [bun](https://bun.sh)）：
 
 ```bash
-bun src/cli.ts render docs/architecture/diagrams     # 重新渲染 SVG，可放进 CI
-bun src/cli.ts review .clean-arch/plan.md            # 打开评审页面，结论打印到终端
+npm run build                                        # 编译 dist/mcp.js、dist/cli.js、dist/agy-hooks.js 与单文件 MCP App
+node dist/cli.js render docs/architecture/diagrams   # 重新渲染 SVG，可放进 CI（有 bun 也可用 bun src/cli.ts）
+node dist/cli.js review .clean-arch/plan.md          # 打开评审页面，结论打印到终端
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> summary
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> summary --brief     # 只输出指标表
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> importers pkg.sub.mod  # 删除/移动前查全部引用
@@ -171,8 +203,9 @@ python3 skills/clean-arch/scripts/leftover_scan.py --root <repo> --since main --
 
 ```bash
 npm install
-npm test            # bun test（插件、渲染、评审服务）+ Python unittest（分析脚本）
+npm run build       # 构建 Node 产物与 Antigravity MCP App 单文件 HTML
+npm test            # 有 bun 时运行 bun test，否则自动使用 esbuild + node --test；随后运行 Python unittest
 npm run typecheck
 ```
 
-代码结构：`src/index.ts` 同时导出 2.x 的 `setup()` 与 1.x 的 `server()`；`src/tools.ts` 定义与版本无关的工具，分别转换成 JSON Schema（2.x）和 zod（1.x）；`src/review/` 是评审页面；`skills/` 是 skill 正文与 Python 脚本。
+代码结构：`src/index.ts` 与 `src/commands.ts` 保留 opencode 1.x/2.x 入口；`src/tools.ts` 与 `src/review/` 为宿主无关核心；`src/adapters/mcp.ts` 提供通用 MCP Server 与 Antigravity 侧边栏 MCP App；`src/adapters/agy-hooks.ts` 提供 Antigravity 只读阶段 `PreToolUse` 护栏；`skills/` 是跨平台 Skill 正文与 Python 脚本。

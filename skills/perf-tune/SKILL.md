@@ -107,8 +107,8 @@ median/spread in `.clean-arch/perf.md`. Fix noise > ~10% before trusting small d
 Rank candidates by `(measured share of time or memory) * (ease & safety)` in `.clean-arch/perf.md`
 alongside the baseline flame graphs: evidence (`file:line` + profile % / MB), change, Amdahl-bounded
 expected gain, and behaviour impact. Get approval via `clean_arch_review` on `.clean-arch/perf.md`
-(so the user sees the flame graphs and plan together in the browser) when there are multiple steps
-or trade-offs, or a quick "go" in chat for a single local fix.
+(which renders the embedded flame graphs inline in the side-pane MCP App or browser review page)
+when there are multiple steps or trade-offs, or a quick "go" in chat for a single local fix.
 
 ### 4. Apply one by one and chart comparisons
 
