@@ -36,6 +36,7 @@ skill、6 个命令和 5 个工具，同一个包同时支持 Antigravity 原生
 ```bash
 npm install         # 安装依赖
 npm run bundle      # 构建 dist/review-app.html, dist/mcp.js, dist/agy-hooks.js, dist/cli.js
+npm run check:dist  # 校验提交的 dist/ 与当前 src/ 字节一致
 npm test            # node scripts/run-tests.mjs + python3 -m unittest discover -s tests/python -t .
 npm run typecheck   # tsc --noEmit
 python3 skills/clean-arch/scripts/arch_facts.py --root <repo> summary|json|mermaid|check|importers|verify

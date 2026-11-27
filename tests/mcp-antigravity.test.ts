@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -54,6 +55,13 @@ describe("Antigravity plugin manifest & build artifacts", () => {
     // src/index.ts must not require @opencode-ai/plugin at runtime
     const indexSrc = readFileSync(path.join(PACKAGE_ROOT, "src", "index.ts"), "utf8")
     expect(indexSrc).not.toContain("@opencode-ai/plugin")
+
+    // Prebuilt dist/ must stay byte-for-byte in sync with src/
+    const checkRes = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, "scripts", "build.mjs"), "--check"], {
+      cwd: PACKAGE_ROOT,
+      encoding: "utf8",
+    })
+    expect(checkRes.status).toBe(0)
   })
 })
 

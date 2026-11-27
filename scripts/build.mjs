@@ -6,7 +6,9 @@ import * as esbuild from "esbuild"
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const DIST = path.join(ROOT, "dist")
 
-async function buildMcpAppHtml() {
+const normalizeLf = (text) => text.replace(/\r\n/g, "\n")
+
+async function compileMcpAppHtml() {
   const bundle = await esbuild.build({
     entryPoints: [path.join(ROOT, "src/review/mcp-app/app.ts")],
     bundle: true,
@@ -16,23 +18,22 @@ async function buildMcpAppHtml() {
     target: "es2022",
     minify: true,
   })
-  const js = bundle.outputFiles[0].text.replace(/<\/script/gi, "<\\/script")
-  const template = await readFile(path.join(ROOT, "src/review/mcp-app/index.html"), "utf8")
-  const html = template.replace(
+  const js = normalizeLf(bundle.outputFiles[0].text).replace(/<\/script/gi, "<\\/script")
+  const template = normalizeLf(await readFile(path.join(ROOT, "src/review/mcp-app/index.html"), "utf8"))
+  return template.replace(
     /<script\s+type="module"\s+src="\.\/app\.ts"><\/script>/,
     () => `<script>${js}</script>`,
   )
-  await writeFile(path.join(DIST, "review-app.html"), html, "utf8")
 }
 
-async function buildNodeEntry(contents, outfile) {
-  await esbuild.build({
+async function compileNodeEntry(contents) {
+  const bundle = await esbuild.build({
     stdin: {
-      contents,
+      contents: normalizeLf(contents),
       resolveDir: path.join(ROOT, "src"),
       loader: "ts",
     },
-    outfile,
+    write: false,
     bundle: true,
     format: "esm",
     platform: "node",
@@ -40,27 +41,53 @@ async function buildNodeEntry(contents, outfile) {
     packages: "external",
     banner: { js: "#!/usr/bin/env node" },
   })
+  return normalizeLf(bundle.outputFiles[0].text)
 }
 
-async function buildNodeTargets() {
-  await buildNodeEntry(
-    `import { runMcpStdio } from "./adapters/mcp.ts";\nrunMcpStdio().catch((e) => { console.error("[clean-arch-mcp] fatal:", e); process.exit(1); });\n`,
-    path.join(DIST, "mcp.js"),
-  )
-  await buildNodeEntry(
-    `import { runAgyPreToolUseHook } from "./adapters/agy-hooks.ts";\nvoid runAgyPreToolUseHook();\n`,
-    path.join(DIST, "agy-hooks.js"),
-  )
-
-  // cli.ts 自身以 #!/usr/bin/env bun 开头，构建为 Node 可执行文件时替换为 node shebang
-  const cliSrc = await readFile(path.join(ROOT, "src/cli.ts"), "utf8")
+async function compileAllTargets() {
+  const cliSrc = normalizeLf(await readFile(path.join(ROOT, "src/cli.ts"), "utf8"))
   const cliWithoutShebang = cliSrc.replace(/^#![^\n]*\n/, "")
-  await buildNodeEntry(cliWithoutShebang, path.join(DIST, "cli.js"))
+
+  const [reviewAppHtml, mcpJs, agyHooksJs, cliJs] = await Promise.all([
+    compileMcpAppHtml(),
+    compileNodeEntry(
+      `import { runMcpStdio } from "./adapters/mcp.ts";\nrunMcpStdio().catch((e) => { console.error("[clean-arch-mcp] fatal:", e); process.exit(1); });\n`,
+    ),
+    compileNodeEntry(
+      `import { runAgyPreToolUseHook } from "./adapters/agy-hooks.ts";\nvoid runAgyPreToolUseHook();\n`,
+    ),
+    compileNodeEntry(cliWithoutShebang),
+  ])
+
+  return [
+    ["review-app.html", reviewAppHtml],
+    ["mcp.js", mcpJs],
+    ["agy-hooks.js", agyHooksJs],
+    ["cli.js", cliJs],
+  ]
 }
 
 async function main() {
+  const checkOnly = process.argv.includes("--check")
+  const targets = await compileAllTargets()
+
+  if (checkOnly) {
+    const stale = []
+    for (const [name, expected] of targets) {
+      const targetPath = path.join(DIST, name)
+      const actual = await readFile(targetPath, "utf8").then(normalizeLf, () => null)
+      if (actual !== expected) stale.push(`dist/${name}`)
+    }
+    if (stale.length > 0) {
+      console.error(`Stale or missing prebuilt artifacts: ${stale.join(", ")}. Run "npm run bundle" and commit dist/.`)
+      process.exit(1)
+    }
+    console.log("Verified dist/ artifacts are up to date with src/.")
+    return
+  }
+
   await mkdir(DIST, { recursive: true })
-  await Promise.all([buildMcpAppHtml(), buildNodeTargets()])
+  await Promise.all(targets.map(([name, content]) => writeFile(path.join(DIST, name), content, "utf8")))
   console.log("Built dist/review-app.html, dist/mcp.js, dist/agy-hooks.js, dist/cli.js")
 }
 

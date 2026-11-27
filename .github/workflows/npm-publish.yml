@@ -32,9 +32,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build bundle, typecheck, and run tests
+      - name: Verify prebuilt dist/ matches src/
+        run: npm run check:dist
+
+      - name: Typecheck & run tests
         run: |
-          npm run bundle
           npm run typecheck
           npm test
 

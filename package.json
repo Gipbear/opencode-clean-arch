@@ -50,6 +50,7 @@
   },
   "scripts": {
     "bundle": "node scripts/build.mjs",
+    "check:dist": "node scripts/build.mjs --check",
     "test": "node scripts/run-tests.mjs && python3 -m unittest discover -s tests/python -t .",
     "typecheck": "tsc --noEmit -p ."
   },
