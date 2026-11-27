@@ -50,7 +50,8 @@ describe("Antigravity plugin manifest & build artifacts", () => {
       expect(pkgJson.scripts?.[forbidden]).toBe(undefined)
     }
     expect(pkgJson.scripts?.bundle).toBe("node scripts/build.mjs")
-    // src/index.ts must not require optional peerDependency @opencode-ai/plugin at runtime
+    expect(pkgJson.peerDependencies).toBe(undefined)
+    // src/index.ts must not require @opencode-ai/plugin at runtime
     const indexSrc = readFileSync(path.join(PACKAGE_ROOT, "src", "index.ts"), "utf8")
     expect(indexSrc).not.toContain("@opencode-ai/plugin")
   })

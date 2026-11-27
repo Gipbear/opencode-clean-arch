@@ -53,7 +53,8 @@
 包含 `plugin.json`、`mcp_config.json`（MCP 工具 + 侧边栏交互式评审 **MCP App**）、`hooks.json`（诊断/待批阶段 `PreToolUse` 只读护栏）、`rules/AGENTS.md` 与全部 Skill（含 `/arch-review`）：
 
 ```bash
-npm install && npm run bundle
+# dist/ 已随仓库预构建提交，仅需安装运行时依赖（改动源码后用 npm run bundle 重新生成 dist/）
+npm install --omit=dev
 # macOS / Linux 全局启用（推荐）：软链接到 Antigravity 全局插件目录
 ln -s "$(pwd)" ~/.gemini/config/plugins/clean-arch
 # Windows PowerShell 全局启用：创建目录联接（无需管理员权限）
@@ -68,7 +69,7 @@ New-Item -ItemType Junction -Path "$HOME\.gemini\config\plugins\clean-arch" -Tar
 
 ### 通用 MCP 客户端（Claude Code / Cursor / Codex 等）
 
-1. 构建一次：`npm install && npm run bundle`
+1. 安装运行时依赖：`npm install --omit=dev`（`dist/` 已预构建入库；若修改源码则执行 `npm install && npm run bundle`；也可直接 `npm install -g "git+https://github.com/Gipbear/opencode-clean-arch.git"` 获取 `clean-arch` CLI）；
 2. 把 `skills/` 复制或链接到客户端对应的 skills 目录（如 `.agents/skills/` 或 `.claude/skills/`）；
 3. 在客户端 MCP 配置中挂载 Stdio Server：
 
