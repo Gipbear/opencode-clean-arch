@@ -38,7 +38,7 @@ const DECISION_LABEL: Record<Decision, string> = {
   changes_requested: "要求修改",
 }
 
-const app = new App({ name: "clean-arch-review", version: "0.4.2" }, {})
+const app = new App({ name: "clean-arch-review", version: "0.4.3" }, {})
 
 let currentRoot = ""
 let currentFile = ""

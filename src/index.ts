@@ -56,20 +56,20 @@ const plugin = {
   },
 
   async server(input: any) {
-    const { tool } = await import("@opencode-ai/plugin")
+    const { z } = await import("zod")
     const tools = Object.fromEntries(
       TOOLS.map((spec) => [
         spec.name,
-        tool({
+        {
           description: spec.description,
-          args: toZodShape(tool.schema, spec.params) as any,
+          args: toZodShape(z, spec.params) as any,
           execute: async (args: any, context: any) =>
             spec.execute(args, {
               directory: context?.directory ?? input?.directory ?? process.cwd(),
               signal: context?.abort,
               progress: (title) => context?.metadata?.({ title }),
             }),
-        }),
+        },
       ]),
     )
     return {
