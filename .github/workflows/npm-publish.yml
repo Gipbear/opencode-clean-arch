@@ -35,8 +35,9 @@ jobs:
       - name: Verify prebuilt dist/ matches src/
         run: npm run check:dist
 
-      - name: Typecheck & run tests
+      - name: Rebuild bundle, typecheck & run tests
         run: |
+          npm run bundle
           npm run typecheck
           npm test
 
